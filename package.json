@@ -1,6 +1,6 @@
 {
   "name": "diffio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Diffio API client for Node.js",
   "license": "MIT",
   "main": "./dist/index.js",
