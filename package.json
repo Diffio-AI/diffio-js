@@ -2,6 +2,10 @@
   "name": "diffio",
   "version": "0.1.1",
   "description": "Diffio API client for Node.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Diffio-AI/diffio-js"
+  },
   "license": "MIT",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
