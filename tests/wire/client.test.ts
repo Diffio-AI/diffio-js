@@ -24,7 +24,7 @@ describe("DiffioClient wire", () => {
           Authorization: "Bearer test",
           "Content-Type": "application/json",
           "X-Diffio-SDK-Language": "JavaScript",
-          "X-Diffio-SDK-Name": "diffio-js",
+          "X-Diffio-SDK-Name": "diffio",
           "X-Diffio-SDK-Version": DIFFIO_SDK_VERSION
         })
         .jsonBody({

@@ -5,7 +5,7 @@ The Diffio JS SDK helps you call the Diffio API from Node. This version covers p
 ## Install
 
 ```bash
-npm install diffio-js
+npm install diffio
 ```
 
 For local development:
@@ -35,7 +35,7 @@ export DIFFIO_API_BASE_URL="http://127.0.0.1:5001/diffioai/us-central1"
 Use request options to override headers, timeouts, retries, or the API key per request.
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const projects = await client.listProjects({
@@ -53,7 +53,7 @@ const projects = await client.listProjects({
 `createProject` uploads the file and returns the project metadata.
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const filePath = "sample.wav";
@@ -74,7 +74,7 @@ console.log(generation.generationId);
 ## Audio isolation helper
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
@@ -92,7 +92,7 @@ This helper runs the full flow and returns the downloaded bytes plus a metadata 
 
 ```ts
 import fs from "node:fs";
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
@@ -114,7 +114,7 @@ console.log(info.apiProjectId, info.generationId);
 ## Generation progress
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const progress = await client.generations.getProgress({
@@ -128,7 +128,7 @@ console.log(progress.status);
 ## Generation download
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const download = await client.generations.getDownload({
@@ -143,7 +143,7 @@ console.log(download.downloadUrl);
 ## List projects
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const projects = await client.projects.list();
@@ -156,7 +156,7 @@ for (const project of projects.projects) {
 ## List project generations
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const generations = await client.projects.listGenerations({ apiProjectId: "proj_123" });
@@ -169,7 +169,7 @@ for (const generation of generations.generations) {
 ## Webhooks portal access
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const portal = await client.webhooks.getPortalAccess({ mode: "test" });
@@ -179,7 +179,7 @@ console.log(portal.portalUrl);
 ## Send a test webhook event
 
 ```ts
-import { DiffioClient } from "diffio-js";
+import { DiffioClient } from "diffio";
 
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const event = await client.webhooks.sendTestEvent({

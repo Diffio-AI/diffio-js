@@ -1,0 +1,53 @@
+name: Publish JS SDK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**"
+      - ".github/workflows/publish-npm.yml"
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11.5.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Decide whether to publish
+        id: should_publish
+        run: |
+          current=$(node -p "require('./package.json').version")
+          published=$(npm view diffio version 2>/dev/null || true)
+          echo "current=$current"
+          echo "published=$published"
+          if [ "$current" = "$published" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: ${{ steps.should_publish.outputs.publish == 'true' }}
+        run: npm run build
+
+      - name: Publish to npm
+        if: ${{ steps.should_publish.outputs.publish == 'true' }}
+        run: npm publish --access public

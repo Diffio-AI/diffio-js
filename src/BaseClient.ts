@@ -33,9 +33,9 @@ export function normalizeClientOptions<T extends BaseClientOptions>(options: T):
   const headers = mergeHeaders(
     {
       "X-Diffio-SDK-Language": "JavaScript",
-      "X-Diffio-SDK-Name": "diffio-js",
+      "X-Diffio-SDK-Name": "diffio",
       "X-Diffio-SDK-Version": DIFFIO_SDK_VERSION,
-      "User-Agent": `diffio-js/${DIFFIO_SDK_VERSION}`
+      "User-Agent": `diffio/${DIFFIO_SDK_VERSION}`
     },
     options?.headers
   );
