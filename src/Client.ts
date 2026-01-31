@@ -13,7 +13,6 @@ import {
   parseGenerationProgressResponse,
   parseListProjectGenerationsResponse,
   parseListProjectsResponse,
-  parseWebhookPortalResponse,
   parseWebhookTestEventResponse
 } from "./api/serialization";
 import type {
@@ -25,7 +24,6 @@ import type {
   ListProjectGenerationsResponse,
   ListProjectsResponse,
   RestoreMetadata,
-  WebhookPortalResponse,
   WebhookTestEventResponse
 } from "./api/types";
 import { AudioIsolationClient, GenerationsClient, ProjectsClient, WebhooksClient } from "./api/resources";
@@ -288,25 +286,6 @@ export class DiffioClient {
     }
     const response = await this._requestJson("POST", "get_generation_download", payload, requestOptions);
     return parseGenerationDownloadResponse(response);
-  }
-
-  async getWebhooksPortalAccess(options: {
-    mode: string;
-    apiKeyId?: string;
-    requestOptions?: DiffioClient.RequestOptions;
-  }): Promise<WebhookPortalResponse> {
-    const { mode, apiKeyId, requestOptions } = options;
-    if (!WEBHOOK_MODES.includes(mode)) {
-      throw new DiffioApiError("mode must be test or live");
-    }
-
-    const payload: Record<string, unknown> = { mode };
-    if (apiKeyId != null) {
-      payload.apiKeyId = apiKeyId;
-    }
-
-    const response = await this._requestJson("POST", "webhooks/app_portal_access", payload, requestOptions);
-    return parseWebhookPortalResponse(response);
   }
 
   async sendWebhookTestEvent(options: {

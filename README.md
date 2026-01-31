@@ -17,17 +17,11 @@ npm install
 
 ## Configuration
 
-Set the API key with `DIFFIO_API_KEY`. You can also override the base URL with `DIFFIO_API_BASE_URL`.
+Set the API key with `DIFFIO_API_KEY`. If you need to set the base URL explicitly, use the production endpoint with `DIFFIO_API_BASE_URL`.
 
 ```bash
 export DIFFIO_API_KEY="diffio_live_..."
-export DIFFIO_API_BASE_URL="https://us-central1-diffioai.cloudfunctions.net"
-```
-
-For emulators, set the base URL to the Functions emulator host.
-
-```bash
-export DIFFIO_API_BASE_URL="http://127.0.0.1:5001/diffioai/us-central1"
+export DIFFIO_API_BASE_URL="https://us-central1-diffioai.cloudfunctions.net/v1"
 ```
 
 ## Request options
@@ -166,16 +160,6 @@ for (const generation of generations.generations) {
 }
 ```
 
-## Webhooks portal access
-
-```ts
-import { DiffioClient } from "diffio";
-
-const client = new DiffioClient({ apiKey: "diffio_live_..." });
-const portal = await client.webhooks.getPortalAccess({ mode: "test" });
-console.log(portal.portalUrl);
-```
-
 ## Send a test webhook event
 
 ```ts
@@ -184,11 +168,44 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const event = await client.webhooks.sendTestEvent({
   eventType: "generation.completed",
-  mode: "test",
+  mode: "live",
   samplePayload: { apiProjectId: "proj_123" }
 });
 
 console.log(event.svixMessageId);
+```
+
+## Verify webhook signatures
+
+Use the raw request body (not parsed JSON) plus the `svix-*` headers and your webhook signing secret.
+
+```ts
+import express from "express";
+import { DiffioClient } from "diffio";
+
+const app = express();
+const client = new DiffioClient({ apiKey: process.env.DIFFIO_API_KEY });
+
+app.post("/webhooks/diffio", express.raw({ type: "application/json" }), (req, res) => {
+  const payload = req.body;
+  const headers = {
+    "svix-id": req.header("svix-id"),
+    "svix-timestamp": req.header("svix-timestamp"),
+    "svix-signature": req.header("svix-signature")
+  };
+
+  try {
+    const event = client.webhooks.verifySignature({
+      payload,
+      headers,
+      secret: process.env.DIFFIO_WEBHOOK_SECRET
+    });
+    console.log("Webhook received", event.eventType);
+    res.status(200).send("ok");
+  } catch (err) {
+    res.status(400).send("Invalid signature");
+  }
+});
 ```
 
 ## Runtime compatibility

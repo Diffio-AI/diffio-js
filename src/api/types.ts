@@ -91,12 +91,6 @@ export interface AudioIsolationResult {
   generation: CreateGenerationResponse;
 }
 
-export interface WebhookPortalResponse {
-  portalUrl: string;
-  mode?: WebhookMode | string | null;
-  apiKeyId?: string | null;
-}
-
 export interface WebhookTestEventResponse {
   svixMessageId: string;
   eventId: string;

@@ -38,15 +38,10 @@ describe("DiffioClient", () => {
     ).rejects.toThrow(DiffioApiError);
   });
 
-  test("getWebhooksPortalAccess rejects invalid mode", async () => {
-    const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
-    await expect(client.getWebhooksPortalAccess({ mode: "invalid" })).rejects.toThrow(DiffioApiError);
-  });
-
   test("sendWebhookTestEvent rejects invalid eventType", async () => {
     const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
     await expect(
-      client.sendWebhookTestEvent({ eventType: "generation.unknown", mode: "test" })
+      client.sendWebhookTestEvent({ eventType: "generation.unknown", mode: "live" })
     ).rejects.toThrow(DiffioApiError);
   });
 
@@ -55,7 +50,7 @@ describe("DiffioClient", () => {
     await expect(
       client.sendWebhookTestEvent({
         eventType: "generation.completed",
-        mode: "test",
+        mode: "live",
         samplePayload: "invalid" as any
       })
     ).rejects.toThrow(DiffioApiError);

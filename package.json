@@ -22,7 +22,8 @@
     "test:wire": "jest --selectProjects wire"
   },
   "dependencies": {
-    "mime-types": "^2.1.35"
+    "mime-types": "^2.1.35",
+    "svix": "^1.84.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

@@ -10,7 +10,6 @@ import type {
   ListProjectsResponse,
   ProjectGenerationSummary,
   ProjectSummary,
-  WebhookPortalResponse,
   WebhookTestEventResponse
 } from "./types";
 
@@ -109,14 +108,6 @@ export function parseGenerationDownloadResponse(data: any): GenerationDownloadRe
     storagePath: data.storagePath,
     bucket: data.bucket,
     mimeType: data.mimeType
-  };
-}
-
-export function parseWebhookPortalResponse(data: any): WebhookPortalResponse {
-  return {
-    portalUrl: data.portalUrl,
-    mode: data.mode ?? null,
-    apiKeyId: data.apiKeyId ?? null
   };
 }
 

@@ -147,37 +147,6 @@ describe("DiffioClient wire", () => {
     });
   });
 
-  test("getWebhooksPortalAccess sends payload and returns response", async () => {
-    const server = mockServerPool.createServer();
-    const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
-
-    server
-      .mockEndpoint()
-      .post("/v1/webhooks/app_portal_access")
-      .headers({
-        Authorization: "Bearer test",
-        "Content-Type": "application/json"
-      })
-      .jsonBody({
-        mode: "test",
-        apiKeyId: "key_123"
-      })
-      .respondWith()
-      .statusCode(200)
-      .jsonBody({
-        portalUrl: "https://app.svix.com/app-portal/test",
-        mode: "test"
-      })
-      .build();
-
-    const response = await client.getWebhooksPortalAccess({ mode: "test", apiKeyId: "key_123" });
-    expect(response).toEqual({
-      portalUrl: "https://app.svix.com/app-portal/test",
-      mode: "test",
-      apiKeyId: null
-    });
-  });
-
   test("sendWebhookTestEvent sends payload and returns response", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
@@ -191,7 +160,7 @@ describe("DiffioClient wire", () => {
       })
       .jsonBody({
         eventType: "generation.completed",
-        mode: "test",
+        mode: "live",
         apiKeyId: "key_123",
         samplePayload: { apiProjectId: "proj_123" }
       })
@@ -201,13 +170,13 @@ describe("DiffioClient wire", () => {
         svixMessageId: "msg_123",
         eventId: "evt_123",
         eventType: "generation.completed",
-        mode: "test"
+        mode: "live"
       })
       .build();
 
     const response = await client.sendWebhookTestEvent({
       eventType: "generation.completed",
-      mode: "test",
+      mode: "live",
       apiKeyId: "key_123",
       samplePayload: { apiProjectId: "proj_123" }
     });
@@ -215,7 +184,7 @@ describe("DiffioClient wire", () => {
       svixMessageId: "msg_123",
       eventId: "evt_123",
       eventType: "generation.completed",
-      mode: "test",
+      mode: "live",
       apiKeyId: null
     });
   });
