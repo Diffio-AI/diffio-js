@@ -16,7 +16,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/bump-version.mjs && npm run build",
+    "version:registry": "node scripts/bump-version.mjs",
     "test": "jest --config jest.config.mjs",
     "test:unit": "jest --selectProjects unit",
     "test:wire": "jest --selectProjects wire"

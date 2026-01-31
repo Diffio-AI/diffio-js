@@ -29,7 +29,7 @@ import type {
 import { AudioIsolationClient, GenerationsClient, ProjectsClient, WebhooksClient } from "./api/resources";
 import { lookup as lookupMimeType } from "mime-types";
 
-const DEFAULT_BASE_URL = "https://us-central1-diffioai.cloudfunctions.net";
+const DEFAULT_BASE_URL = "https://api.diffio.ai";
 const API_PREFIX = "v1";
 const MODEL_ENDPOINTS: Record<string, string> = {
   "diffio-2": "diffio-2.0-generation",
