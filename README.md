@@ -58,7 +58,7 @@ const project = await client.createProject({
 
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
-  model: "diffio-2",
+  model: "diffio-3.5",
   sampling: { steps: 12, guidance: 1.5 }
 });
 
@@ -73,7 +73,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
-  model: "diffio-2",
+  model: "diffio-3.5",
   sampling: { steps: 12, guidance: 1.5 }
 });
 
@@ -91,7 +91,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
-  model: "diffio-2",
+  model: "diffio-3.5",
   sampling: { steps: 12, guidance: 1.5 },
   onProgress: (progress) => console.log(progress.status)
 });
@@ -132,6 +132,35 @@ const download = await client.generations.getDownload({
 });
 
 console.log(download.downloadUrl);
+```
+
+Set `downloadType` to `"transcript"` to fetch the transcript JSON artifact when the generation has one.
+
+```ts
+const transcript = await client.generations.getDownload({
+  generationId: "gen_123",
+  apiProjectId: "proj_123",
+  downloadType: "transcript"
+});
+```
+
+## Account, keys, usage, and webhook configuration
+
+Agent keys can manage account settings, scoped keys, usage, and webhook endpoints.
+
+```ts
+const settings = await client.account.getSettings();
+const key = await client.apiKeys.create({
+  label: "Backend worker",
+  scopes: ["projects:read", "projects:write", "generations:read", "generations:write", "artifacts:read"]
+});
+const usage = await client.usage.summary({ apiKeyId: key.keyId });
+const webhook = await client.webhooks.configure({
+  mode: "live",
+  url: "https://example.com/webhooks/diffio",
+  eventTypes: ["generation.completed", "generation.failed"],
+  apiKeyId: key.keyId
+});
 ```
 
 ## List projects

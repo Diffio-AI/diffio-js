@@ -1,7 +1,7 @@
 import type { DiffioClient } from "../../../../Client";
 import { DiffioApiError } from "../../../../errors";
 import { parseGenerationWebhookEvent } from "../../../serialization";
-import type { GenerationWebhookEvent, WebhookTestEventResponse } from "../../../types";
+import type { GenerationWebhookEvent, WebhookConfigureResponse, WebhookTestEventResponse } from "../../../types";
 import { Webhook } from "svix";
 
 export interface WebhookTestEventOptions {
@@ -9,6 +9,14 @@ export interface WebhookTestEventOptions {
   mode: string;
   apiKeyId?: string;
   samplePayload?: Record<string, unknown>;
+  requestOptions?: DiffioClient.RequestOptions;
+}
+
+export interface WebhookConfigureOptions {
+  mode: string;
+  url: string;
+  eventTypes: string[];
+  apiKeyId?: string;
   requestOptions?: DiffioClient.RequestOptions;
 }
 
@@ -29,6 +37,10 @@ export class WebhooksClient {
 
   async sendTestEvent(options: WebhookTestEventOptions): Promise<WebhookTestEventResponse> {
     return this._parent.sendWebhookTestEvent(options);
+  }
+
+  async configure(options: WebhookConfigureOptions): Promise<WebhookConfigureResponse> {
+    return this._parent.configureWebhook(options);
   }
 
   verifySignature(options: WebhookVerifyOptions): GenerationWebhookEvent {

@@ -1,5 +1,5 @@
-export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3";
-export type DownloadType = "audio" | "video";
+export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3" | "diffio-3.4" | "diffio-3.5";
+export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =
   | "generation.queued"
@@ -97,6 +97,40 @@ export interface WebhookTestEventResponse {
   eventType: WebhookEventType | string;
   mode?: WebhookMode | string | null;
   apiKeyId?: string | null;
+}
+
+export interface AccountSettingsResponse {
+  apiKeyId?: string | null;
+  account: Record<string, unknown>;
+}
+
+export interface ApiKeyResponse {
+  key?: string;
+  keyId: string;
+  label: string;
+  status: string;
+  keyPrefix: string;
+  role: string;
+  scopes: string[];
+  resourceBounds: Record<string, unknown>;
+  parentKeyId?: string | null;
+  createdAt?: string | null;
+  rotatedAt?: string | null;
+  revokedAt?: string | null;
+  permissions?: Record<string, unknown>;
+}
+
+export interface ApiKeysListResponse {
+  keys: ApiKeyResponse[];
+}
+
+export interface UsageSummaryResponse {
+  usage: Record<string, unknown>;
+  billing: Record<string, unknown>;
+}
+
+export interface WebhookConfigureResponse {
+  webhook: Record<string, unknown>;
 }
 
 export interface GenerationWebhookEvent {

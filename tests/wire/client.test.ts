@@ -100,6 +100,71 @@ describe("DiffioClient wire", () => {
     });
   });
 
+  test("createGeneration routes to Diffio 3.5 endpoint", async () => {
+    const server = mockServerPool.createServer();
+    const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
+
+    server
+      .mockEndpoint()
+      .post("/v1/diffio-3.5-generation")
+      .headers({
+        Authorization: "Bearer test",
+        "Content-Type": "application/json"
+      })
+      .jsonBody({ apiProjectId: "proj_123" })
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        generationId: "gen_35",
+        apiProjectId: "proj_123",
+        modelKey: "diffio-3.5",
+        status: "queued"
+      })
+      .build();
+
+    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-3.5" });
+    expect(response.modelKey).toBe("diffio-3.5");
+  });
+
+  test("getGenerationDownload accepts transcript download type", async () => {
+    const server = mockServerPool.createServer();
+    const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
+
+    server
+      .mockEndpoint()
+      .post("/v1/get_generation_download")
+      .headers({
+        Authorization: "Bearer test",
+        "Content-Type": "application/json"
+      })
+      .jsonBody({
+        generationId: "gen_1",
+        apiProjectId: "proj_1",
+        downloadType: "transcript"
+      })
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        generationId: "gen_1",
+        apiProjectId: "proj_1",
+        downloadType: "transcript",
+        downloadUrl: "https://download.test/word_timestamps.json",
+        fileName: "word_timestamps.json",
+        storagePath: "users/u/projects/proj_1/generations/gen_1/word_timestamps.json",
+        bucket: "diffio_api",
+        mimeType: "application/json"
+      })
+      .build();
+
+    const response = await client.generations.getDownload({
+      generationId: "gen_1",
+      apiProjectId: "proj_1",
+      downloadType: "transcript"
+    });
+    expect(response.downloadType).toBe("transcript");
+    expect(response.fileName).toBe("word_timestamps.json");
+  });
+
   test("listProjects parses response", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
@@ -187,5 +252,96 @@ describe("DiffioClient wire", () => {
       mode: "live",
       apiKeyId: null
     });
+  });
+
+  test("account settings, keys, usage, and webhook configure endpoints", async () => {
+    const server = mockServerPool.createServer();
+    const client = new DiffioClient({ apiKey: "agent", baseUrl: server.baseUrl, maxRetries: 0 });
+
+    server
+      .mockEndpoint()
+      .post("/v1/account/settings/get")
+      .jsonBody({})
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        apiKeyId: "agent_1",
+        account: { userId: "user_1", billingPolicy: { type: "internalDiffio" } }
+      })
+      .build();
+
+    server
+      .mockEndpoint()
+      .post("/v1/api_keys/create")
+      .jsonBody({
+        label: "VFC worker",
+        scopes: ["projects:read", "projects:write"],
+        resourceBounds: {}
+      })
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        key: "diffio_live_new",
+        keyId: "key_1",
+        label: "VFC worker",
+        status: "active",
+        keyPrefix: "diffio_live_",
+        role: "scoped",
+        scopes: ["projects:read", "projects:write"],
+        resourceBounds: {},
+        parentKeyId: "agent_1"
+      })
+      .build();
+
+    server
+      .mockEndpoint()
+      .post("/v1/usage/summary")
+      .jsonBody({ apiKeyId: "key_1" })
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        usage: { apiKeyId: "key_1", periods: [] },
+        billing: { billingPolicy: { type: "internalDiffio" } }
+      })
+      .build();
+
+    server
+      .mockEndpoint()
+      .post("/v1/webhooks/configure")
+      .jsonBody({
+        mode: "live",
+        url: "https://example.com/webhook",
+        eventTypes: ["generation.completed"],
+        apiKeyId: "key_1"
+      })
+      .respondWith()
+      .statusCode(200)
+      .jsonBody({
+        webhook: {
+          apiKeyId: "key_1",
+          mode: "live",
+          endpointId: "ep_1",
+          eventTypes: ["generation.completed"]
+        }
+      })
+      .build();
+
+    const settings = await client.account.getSettings();
+    const key = await client.apiKeys.create({
+      label: "VFC worker",
+      scopes: ["projects:read", "projects:write"]
+    });
+    const usage = await client.usage.summary({ apiKeyId: "key_1" });
+    const webhook = await client.webhooks.configure({
+      mode: "live",
+      url: "https://example.com/webhook",
+      eventTypes: ["generation.completed"],
+      apiKeyId: "key_1"
+    });
+
+    expect(settings.account.billingPolicy).toEqual({ type: "internalDiffio" });
+    expect(key.key).toBe("diffio_live_new");
+    expect(usage.billing.billingPolicy).toEqual({ type: "internalDiffio" });
+    expect(webhook.webhook.endpointId).toBe("ep_1");
   });
 });

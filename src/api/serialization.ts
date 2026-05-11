@@ -1,4 +1,7 @@
 import type {
+  AccountSettingsResponse,
+  ApiKeyResponse,
+  ApiKeysListResponse,
   AudioIsolationResult,
   CreateGenerationResponse,
   CreateProjectResponse,
@@ -10,6 +13,8 @@ import type {
   ListProjectsResponse,
   ProjectGenerationSummary,
   ProjectSummary,
+  UsageSummaryResponse,
+  WebhookConfigureResponse,
   WebhookTestEventResponse
 } from "./types";
 
@@ -118,6 +123,49 @@ export function parseWebhookTestEventResponse(data: any): WebhookTestEventRespon
     eventType: data.eventType,
     mode: data.mode ?? null,
     apiKeyId: data.apiKeyId ?? null
+  };
+}
+
+export function parseAccountSettingsResponse(data: any): AccountSettingsResponse {
+  return {
+    apiKeyId: data?.apiKeyId ?? null,
+    account: data?.account && typeof data.account === "object" ? data.account : {}
+  };
+}
+
+export function parseApiKeyResponse(data: any): ApiKeyResponse {
+  return {
+    key: data?.key,
+    keyId: data?.keyId,
+    label: data?.label ?? "",
+    status: data?.status ?? "active",
+    keyPrefix: data?.keyPrefix ?? "",
+    role: data?.role ?? "scoped",
+    scopes: Array.isArray(data?.scopes) ? data.scopes.map(String) : [],
+    resourceBounds: data?.resourceBounds && typeof data.resourceBounds === "object" ? data.resourceBounds : {},
+    parentKeyId: data?.parentKeyId ?? null,
+    createdAt: data?.createdAt ?? null,
+    rotatedAt: data?.rotatedAt ?? null,
+    revokedAt: data?.revokedAt ?? null,
+    permissions: data?.permissions && typeof data.permissions === "object" ? data.permissions : undefined
+  };
+}
+
+export function parseApiKeysListResponse(data: any): ApiKeysListResponse {
+  const items = Array.isArray(data?.keys) ? data.keys : [];
+  return { keys: items.filter(Boolean).map(parseApiKeyResponse) };
+}
+
+export function parseUsageSummaryResponse(data: any): UsageSummaryResponse {
+  return {
+    usage: data?.usage && typeof data.usage === "object" ? data.usage : {},
+    billing: data?.billing && typeof data.billing === "object" ? data.billing : {}
+  };
+}
+
+export function parseWebhookConfigureResponse(data: any): WebhookConfigureResponse {
+  return {
+    webhook: data?.webhook && typeof data.webhook === "object" ? data.webhook : {}
   };
 }
 

@@ -7,15 +7,23 @@ import { requestWithRetries } from "./core/retry";
 import { DiffioApiError, DiffioTimeoutError } from "./errors";
 import {
   createAudioIsolationResult,
+  parseAccountSettingsResponse,
+  parseApiKeyResponse,
+  parseApiKeysListResponse,
   parseCreateGenerationResponse,
   parseCreateProjectResponse,
   parseGenerationDownloadResponse,
   parseGenerationProgressResponse,
   parseListProjectGenerationsResponse,
   parseListProjectsResponse,
+  parseUsageSummaryResponse,
+  parseWebhookConfigureResponse,
   parseWebhookTestEventResponse
 } from "./api/serialization";
 import type {
+  AccountSettingsResponse,
+  ApiKeyResponse,
+  ApiKeysListResponse,
   AudioIsolationResult,
   CreateGenerationResponse,
   CreateProjectResponse,
@@ -24,9 +32,19 @@ import type {
   ListProjectGenerationsResponse,
   ListProjectsResponse,
   RestoreMetadata,
+  UsageSummaryResponse,
+  WebhookConfigureResponse,
   WebhookTestEventResponse
 } from "./api/types";
-import { AudioIsolationClient, GenerationsClient, ProjectsClient, WebhooksClient } from "./api/resources";
+import {
+  AccountClient,
+  ApiKeysClient,
+  AudioIsolationClient,
+  GenerationsClient,
+  ProjectsClient,
+  UsageClient,
+  WebhooksClient
+} from "./api/resources";
 import { lookup as lookupMimeType } from "mime-types";
 
 const DEFAULT_BASE_URL = "https://api.diffio.ai";
@@ -34,7 +52,9 @@ const API_PREFIX = "v1";
 const MODEL_ENDPOINTS: Record<string, string> = {
   "diffio-2": "diffio-2.0-generation",
   "diffio-2-flash": "diffio-2.0-flash-generation",
-  "diffio-3": "diffio-3.0-generation"
+  "diffio-3": "diffio-3.0-generation",
+  "diffio-3.4": "diffio-3.4-generation",
+  "diffio-3.5": "diffio-3.5-generation"
 };
 const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_BACKOFF = 0.5;
@@ -58,6 +78,9 @@ export class DiffioClient {
   public readonly audioIsolation: AudioIsolationClient;
   public readonly generations: GenerationsClient;
   public readonly projects: ProjectsClient;
+  public readonly account: AccountClient;
+  public readonly apiKeys: ApiKeysClient;
+  public readonly usage: UsageClient;
   public readonly webhooks: WebhooksClient;
 
   constructor(options: DiffioClient.Options = {}) {
@@ -71,6 +94,9 @@ export class DiffioClient {
     this.audioIsolation = new AudioIsolationClient(this);
     this.generations = new GenerationsClient(this);
     this.projects = new ProjectsClient(this);
+    this.account = new AccountClient(this);
+    this.apiKeys = new ApiKeysClient(this);
+    this.usage = new UsageClient(this);
     this.webhooks = new WebhooksClient(this);
   }
 
@@ -279,13 +305,120 @@ export class DiffioClient {
     const { generationId, apiProjectId, downloadType, requestOptions } = options;
     const payload: Record<string, unknown> = { generationId, apiProjectId };
     if (downloadType != null) {
-      if (downloadType !== "audio" && downloadType !== "video") {
-        throw new DiffioApiError("downloadType must be audio or video");
+      if (downloadType !== "audio" && downloadType !== "video" && downloadType !== "transcript") {
+        throw new DiffioApiError("downloadType must be audio, video, or transcript");
       }
       payload.downloadType = downloadType;
     }
     const response = await this._requestJson("POST", "get_generation_download", payload, requestOptions);
     return parseGenerationDownloadResponse(response);
+  }
+
+  async getAccountSettings(options: {
+    requestOptions?: DiffioClient.RequestOptions;
+  } = {}): Promise<AccountSettingsResponse> {
+    const response = await this._requestJson("POST", "account/settings/get", {}, options.requestOptions);
+    return parseAccountSettingsResponse(response);
+  }
+
+  async updateAccountSettings(options: {
+    billingPolicy: Record<string, unknown>;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<AccountSettingsResponse> {
+    const { billingPolicy, requestOptions } = options;
+    if (!billingPolicy || typeof billingPolicy !== "object" || Array.isArray(billingPolicy)) {
+      throw new DiffioApiError("billingPolicy must be an object");
+    }
+    const response = await this._requestJson("POST", "account/settings/update", { billingPolicy }, requestOptions);
+    return parseAccountSettingsResponse(response);
+  }
+
+  async createApiKey(options: {
+    label: string;
+    scopes: string[];
+    resourceBounds?: Record<string, unknown>;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<ApiKeyResponse> {
+    const { label, scopes, resourceBounds, requestOptions } = options;
+    if (!label) {
+      throw new DiffioApiError("label is required");
+    }
+    if (!Array.isArray(scopes)) {
+      throw new DiffioApiError("scopes must be an array");
+    }
+    const response = await this._requestJson(
+      "POST",
+      "api_keys/create",
+      { label, scopes, resourceBounds: resourceBounds ?? {} },
+      requestOptions
+    );
+    return parseApiKeyResponse(response);
+  }
+
+  async listApiKeys(options: { requestOptions?: DiffioClient.RequestOptions } = {}): Promise<ApiKeysListResponse> {
+    const response = await this._requestJson("POST", "api_keys/list", {}, options.requestOptions);
+    return parseApiKeysListResponse(response);
+  }
+
+  async rotateApiKey(options: {
+    keyId: string;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<ApiKeyResponse> {
+    const { keyId, requestOptions } = options;
+    if (!keyId) {
+      throw new DiffioApiError("keyId is required");
+    }
+    const response = await this._requestJson("POST", "api_keys/rotate", { keyId }, requestOptions);
+    return parseApiKeyResponse(response);
+  }
+
+  async revokeApiKey(options: {
+    keyId: string;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<ApiKeyResponse> {
+    const { keyId, requestOptions } = options;
+    if (!keyId) {
+      throw new DiffioApiError("keyId is required");
+    }
+    const response = await this._requestJson("POST", "api_keys/revoke", { keyId }, requestOptions);
+    return parseApiKeyResponse(response);
+  }
+
+  async getUsageSummary(options: {
+    apiKeyId?: string;
+    requestOptions?: DiffioClient.RequestOptions;
+  } = {}): Promise<UsageSummaryResponse> {
+    const payload: Record<string, unknown> = {};
+    if (options.apiKeyId != null) {
+      payload.apiKeyId = options.apiKeyId;
+    }
+    const response = await this._requestJson("POST", "usage/summary", payload, options.requestOptions);
+    return parseUsageSummaryResponse(response);
+  }
+
+  async configureWebhook(options: {
+    mode: string;
+    url: string;
+    eventTypes: string[];
+    apiKeyId?: string;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<WebhookConfigureResponse> {
+    const { mode, url, eventTypes, apiKeyId, requestOptions } = options;
+    if (!WEBHOOK_MODES.includes(mode)) {
+      throw new DiffioApiError("mode must be test or live");
+    }
+    if (!url) {
+      throw new DiffioApiError("url is required");
+    }
+    if (!Array.isArray(eventTypes) || eventTypes.length === 0) {
+      throw new DiffioApiError("eventTypes must be a non-empty array");
+    }
+    const payload: Record<string, unknown> = { mode, url, eventTypes };
+    if (apiKeyId != null) {
+      payload.apiKeyId = apiKeyId;
+    }
+    const response = await this._requestJson("POST", "webhooks/configure", payload, requestOptions);
+    return parseWebhookConfigureResponse(response);
   }
 
   async sendWebhookTestEvent(options: {
@@ -817,7 +950,12 @@ function isNodeReadable(value: unknown): value is NodeJS.ReadableStream {
 
 async function createFileReadStream(filePath: string): Promise<NodeJS.ReadableStream> {
   const fs = await import("node:fs");
-  return fs.createReadStream(filePath);
+  const stream = fs.createReadStream(filePath);
+  await new Promise<void>((resolve, reject) => {
+    stream.once("open", () => resolve());
+    stream.once("error", reject);
+  });
+  return stream;
 }
 
 function getFileSize(filePath: string): number {
