@@ -126,6 +126,10 @@ jobs:
           }
           NODE
 
+      - name: Test
+        if: ${{ steps.version.outputs.publish == 'true' }}
+        run: npm test
+
       - name: Build
         if: ${{ steps.version.outputs.publish == 'true' }}
         run: npm run build
