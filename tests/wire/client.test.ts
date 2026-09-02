@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, type ReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DiffioClient } from "../../src/Client";
@@ -64,6 +64,63 @@ describe("DiffioClient wire", () => {
         bucket: "diffio",
         expiresAt: "2024-01-01T00:00:00Z"
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("createProject opens a fresh file stream when an upload is retried", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "diffio-sdk-retry-"));
+    const filePath = join(dir, "retry.bin");
+    const fileContents = Buffer.from("retry uploads must preserve every byte\n", "utf8");
+    writeFileSync(filePath, fileContents);
+
+    const uploadBodies: Buffer[] = [];
+    const uploadStreams: ReadStream[] = [];
+    const fetchMock: typeof fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/create_project")) {
+        return new Response(
+          JSON.stringify({
+            apiProjectId: "proj_retry",
+            uploadUrl: "https://upload.example/retry.bin",
+            uploadMethod: "PUT",
+            objectPath: "uploads/retry.bin",
+            bucket: "diffio",
+            expiresAt: "2024-01-01T00:00:00Z"
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const stream = init?.body as unknown as ReadStream;
+      const chunks: Buffer[] = [];
+      uploadStreams.push(stream);
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      uploadBodies.push(Buffer.concat(chunks));
+
+      return new Response(JSON.stringify({}), {
+        status: uploadBodies.length === 1 ? 503 : 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    const client = new DiffioClient({
+      apiKey: "test",
+      baseUrl: "https://api.example",
+      fetch: fetchMock,
+      maxRetries: 1,
+      retryBackoff: 0
+    });
+
+    try {
+      await client.createProject({ filePath });
+
+      expect(uploadBodies).toEqual([fileContents, fileContents]);
+      expect(uploadStreams).toHaveLength(2);
+      expect(uploadStreams[1]).not.toBe(uploadStreams[0]);
+      expect(uploadStreams.every((stream) => stream.closed && stream.destroyed)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
