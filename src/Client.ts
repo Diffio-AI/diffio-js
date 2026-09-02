@@ -31,6 +31,7 @@ import type {
   GenerationProgressResponse,
   ListProjectGenerationsResponse,
   ListProjectsResponse,
+  ModelKey,
   RestoreMetadata,
   UsageSummaryResponse,
   WebhookConfigureResponse,
@@ -49,13 +50,12 @@ import { lookup as lookupMimeType } from "mime-types";
 
 const DEFAULT_BASE_URL = "https://api.diffio.ai";
 const API_PREFIX = "v1";
-const MODEL_ENDPOINTS: Record<string, string> = {
+const MODEL_ENDPOINTS = {
   "diffio-2": "diffio-2.0-generation",
   "diffio-2-flash": "diffio-2.0-flash-generation",
-  "diffio-3": "diffio-3.0-generation",
   "diffio-3.4": "diffio-3.4-generation",
   "diffio-3.5": "diffio-3.5-generation"
-};
+} as const satisfies Record<ModelKey, string>;
 const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_BACKOFF = 0.5;
 const DEFAULT_TIMEOUT_SECONDS = 60;
@@ -186,7 +186,7 @@ export class DiffioClient {
 
   async createGeneration(options: {
     apiProjectId: string;
-    model?: string;
+    model?: ModelKey;
     sampling?: Record<string, unknown>;
     params?: Record<string, unknown>;
     requestOptions?: DiffioClient.RequestOptions;
@@ -456,7 +456,7 @@ export class DiffioClient {
     contentType?: string;
     contentLength?: number;
     fileFormat?: string;
-    model?: string;
+    model?: ModelKey;
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
@@ -599,7 +599,7 @@ export class DiffioClient {
     contentType?: string;
     contentLength?: number;
     fileFormat?: string;
-    model?: string;
+    model?: ModelKey;
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;

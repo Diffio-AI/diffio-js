@@ -123,7 +123,12 @@ describe("DiffioClient wire", () => {
       .build();
 
     const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-3.5" });
-    expect(response.modelKey).toBe("diffio-3.5");
+    expect(response).toEqual({
+      generationId: "gen_35",
+      apiProjectId: "proj_123",
+      modelKey: "diffio-3.5",
+      status: "queued"
+    });
   });
 
   test("getGenerationDownload accepts transcript download type", async () => {

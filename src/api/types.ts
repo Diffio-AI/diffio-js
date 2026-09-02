@@ -1,4 +1,4 @@
-export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3" | "diffio-3.4" | "diffio-3.5";
+export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3.4" | "diffio-3.5";
 export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =

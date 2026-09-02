@@ -27,8 +27,15 @@ describe("DiffioClient", () => {
   test("createGeneration rejects unsupported model", async () => {
     const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
     await expect(
-      client.createGeneration({ apiProjectId: "proj", model: "unknown-model" })
+      client.createGeneration({ apiProjectId: "proj", model: "unknown-model" as never })
     ).rejects.toThrow(DiffioApiError);
+  });
+
+  test("createGeneration rejects the retired diffio-3 model", async () => {
+    const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
+    await expect(
+      client.createGeneration({ apiProjectId: "proj", model: "diffio-3" as never })
+    ).rejects.toThrow("Unsupported model: diffio-3");
   });
 
   test("getGenerationDownload rejects invalid downloadType", async () => {
