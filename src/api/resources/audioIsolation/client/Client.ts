@@ -10,6 +10,7 @@ export interface AudioIsolationRestoreOptions {
   sampling?: Record<string, unknown>;
   projectParams?: Record<string, unknown>;
   generationParams?: Record<string, unknown>;
+  idempotencyKey?: string;
   downloadType?: string;
   pollInterval?: number;
   timeout?: number;
@@ -31,6 +32,7 @@ export interface AudioIsolationIsolateOptions {
   sampling?: Record<string, unknown>;
   projectParams?: Record<string, unknown>;
   generationParams?: Record<string, unknown>;
+  idempotencyKey?: string;
   requestOptions?: DiffioClient.RequestOptions;
 }
 
@@ -55,6 +57,7 @@ export class AudioIsolationClient {
       sampling,
       projectParams,
       generationParams,
+      idempotencyKey,
       requestOptions
     } = options;
 
@@ -67,6 +70,7 @@ export class AudioIsolationClient {
       sampling,
       projectParams,
       generationParams,
+      idempotencyKey,
       requestOptions
     });
   }

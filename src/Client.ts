@@ -189,9 +189,10 @@ export class DiffioClient {
     model?: ModelKey;
     sampling?: Record<string, unknown>;
     params?: Record<string, unknown>;
+    idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<CreateGenerationResponse> {
-    const { apiProjectId, model = "diffio-2", sampling, params, requestOptions } = options;
+    const { apiProjectId, model = "diffio-2", sampling, params, idempotencyKey, requestOptions } = options;
     const endpoint = MODEL_ENDPOINTS[model];
     if (!endpoint) {
       throw new DiffioApiError(`Unsupported model: ${model}`);
@@ -203,6 +204,9 @@ export class DiffioClient {
     }
     if (params) {
       payload.params = params;
+    }
+    if (idempotencyKey != null) {
+      payload.idempotencyKey = idempotencyKey;
     }
 
     const response = await this._requestJson("POST", endpoint, payload, requestOptions);
@@ -460,6 +464,7 @@ export class DiffioClient {
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
+    idempotencyKey?: string;
     downloadType?: string;
     pollInterval?: number;
     timeout?: number;
@@ -488,6 +493,7 @@ export class DiffioClient {
         sampling: options.sampling,
         projectParams: options.projectParams,
         generationParams: options.generationParams,
+        idempotencyKey: options.idempotencyKey,
         requestOptions: options.requestOptions
       });
     } catch (error) {
@@ -603,6 +609,7 @@ export class DiffioClient {
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
+    idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<AudioIsolationResult> {
     const project = await this.createProject({
@@ -619,6 +626,7 @@ export class DiffioClient {
       model: options.model,
       sampling: options.sampling,
       params: options.generationParams,
+      idempotencyKey: options.idempotencyKey,
       requestOptions: options.requestOptions
     });
 

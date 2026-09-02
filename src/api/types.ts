@@ -37,6 +37,7 @@ export interface CreateGenerationResponse {
   apiProjectId: string;
   modelKey: ModelKey | string;
   status: string;
+  idempotentReplay?: boolean;
 }
 
 export interface ProjectGenerationSummary {

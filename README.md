@@ -59,11 +59,15 @@ const project = await client.createProject({
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
   model: "diffio-3.5",
-  sampling: { steps: 12, guidance: 1.5 }
+  sampling: { steps: 12, guidance: 1.5 },
+  idempotencyKey: "restore-sample-001"
 });
 
-console.log(generation.generationId);
+console.log(generation.generationId, generation.idempotentReplay ?? false);
 ```
+
+Reuse the same `idempotencyKey` when retrying generation creation for a project. The API then
+returns the existing generation with `idempotentReplay: true` instead of creating another generation.
 
 ## Audio isolation helper
 
@@ -74,11 +78,15 @@ const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
   model: "diffio-3.5",
-  sampling: { steps: 12, guidance: 1.5 }
+  sampling: { steps: 12, guidance: 1.5 },
+  idempotencyKey: "restore-sample-001"
 });
 
 console.log(result.generation.generationId);
 ```
+
+The isolation helpers create a new project before creating its generation. Their `idempotencyKey`
+protects retries of that generation request; it does not deduplicate a separate helper call or upload.
 
 ## Restore audio in one call
 
@@ -93,6 +101,7 @@ const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
   model: "diffio-3.5",
   sampling: { steps: 12, guidance: 1.5 },
+  idempotencyKey: "restore-sample-001",
   onProgress: (progress) => console.log(progress.status)
 });
 

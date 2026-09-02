@@ -98,9 +98,10 @@ describe("DiffioClient wire", () => {
       modelKey: "diffio-2",
       status: "queued"
     });
+    expect("idempotentReplay" in response).toBe(false);
   });
 
-  test("createGeneration routes to Diffio 3.5 endpoint", async () => {
+  test("generation resource sends idempotency key and parses replay response", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
 
@@ -111,23 +112,32 @@ describe("DiffioClient wire", () => {
         Authorization: "Bearer test",
         "Content-Type": "application/json"
       })
-      .jsonBody({ apiProjectId: "proj_123" })
+      .jsonBody({
+        apiProjectId: "proj_123",
+        idempotencyKey: "restore-proj-123"
+      })
       .respondWith()
       .statusCode(200)
       .jsonBody({
         generationId: "gen_35",
         apiProjectId: "proj_123",
         modelKey: "diffio-3.5",
-        status: "queued"
+        status: "queued",
+        idempotentReplay: true
       })
       .build();
 
-    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-3.5" });
+    const response = await client.generations.create({
+      apiProjectId: "proj_123",
+      model: "diffio-3.5",
+      idempotencyKey: "restore-proj-123"
+    });
     expect(response).toEqual({
       generationId: "gen_35",
       apiProjectId: "proj_123",
       modelKey: "diffio-3.5",
-      status: "queued"
+      status: "queued",
+      idempotentReplay: true
     });
   });
 

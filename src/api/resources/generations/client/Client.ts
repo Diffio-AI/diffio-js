@@ -11,6 +11,7 @@ export interface GenerationCreateOptions {
   model?: ModelKey;
   sampling?: Record<string, unknown>;
   params?: Record<string, unknown>;
+  idempotencyKey?: string;
   requestOptions?: DiffioClient.RequestOptions;
 }
 
