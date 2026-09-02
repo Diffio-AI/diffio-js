@@ -180,8 +180,8 @@ export class DiffioClient {
       extraHeaders.Authorization = "Bearer owner";
     }
 
-    const body = filePath ? await createFileReadStream(filePath) : data;
-    await this._requestBinary(method, uploadUrl, body, requestOptions, extraHeaders, true);
+    const bodyFactory = filePath ? () => createFileReadStream(filePath) : () => data;
+    await this._requestBinary(method, uploadUrl, bodyFactory, requestOptions, extraHeaders, true);
   }
 
   async createGeneration(options: {
@@ -189,9 +189,10 @@ export class DiffioClient {
     model?: ModelKey;
     sampling?: Record<string, unknown>;
     params?: Record<string, unknown>;
+    idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<CreateGenerationResponse> {
-    const { apiProjectId, model = "diffio-2", sampling, params, requestOptions } = options;
+    const { apiProjectId, model = "diffio-2", sampling, params, idempotencyKey, requestOptions } = options;
     const endpoint = MODEL_ENDPOINTS[model];
     if (!endpoint) {
       throw new DiffioApiError(`Unsupported model: ${model}`);
@@ -203,6 +204,9 @@ export class DiffioClient {
     }
     if (params) {
       payload.params = params;
+    }
+    if (idempotencyKey != null) {
+      payload.idempotencyKey = idempotencyKey;
     }
 
     const response = await this._requestJson("POST", endpoint, payload, requestOptions);
@@ -460,6 +464,7 @@ export class DiffioClient {
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
+    idempotencyKey?: string;
     downloadType?: string;
     pollInterval?: number;
     timeout?: number;
@@ -488,6 +493,7 @@ export class DiffioClient {
         sampling: options.sampling,
         projectParams: options.projectParams,
         generationParams: options.generationParams,
+        idempotencyKey: options.idempotencyKey,
         requestOptions: options.requestOptions
       });
     } catch (error) {
@@ -603,6 +609,7 @@ export class DiffioClient {
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
+    idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<AudioIsolationResult> {
     const project = await this.createProject({
@@ -619,6 +626,7 @@ export class DiffioClient {
       model: options.model,
       sampling: options.sampling,
       params: options.generationParams,
+      idempotencyKey: options.idempotencyKey,
       requestOptions: options.requestOptions
     });
 
@@ -636,7 +644,7 @@ export class DiffioClient {
     const response = await this._requestBinary(
       "GET",
       downloadUrl,
-      undefined,
+      () => undefined,
       requestOptions,
       extraHeaders,
       true
@@ -675,7 +683,7 @@ export class DiffioClient {
   private async _requestBinary(
     method: string,
     urlOrPath: string,
-    body: unknown,
+    bodyFactory: () => unknown | Promise<unknown>,
     requestOptions?: DiffioClient.RequestOptions,
     extraHeaders?: Record<string, string>,
     isAbsoluteUrl = false
@@ -683,19 +691,25 @@ export class DiffioClient {
     const { url, headers, timeoutMs, maxRetries, retryBackoff, retryStatusCodes, fetchFn, abortSignal } =
       await this._buildRequest(method, urlOrPath, requestOptions, extraHeaders, isAbsoluteUrl);
 
-    const requestInit: RequestInit = {
-      method,
-      headers,
-      body: body as BodyInit,
-      signal: abortSignal
+    const makeRequest = async () => {
+      const body = await bodyFactory();
+      const requestInit: RequestInit = {
+        method,
+        headers,
+        body: body as BodyInit,
+        signal: abortSignal
+      };
+
+      if (body && isNodeReadable(body)) {
+        (requestInit as { duplex?: "half" }).duplex = "half";
+      }
+
+      try {
+        return await fetchWithTimeout(fetchFn, url, requestInit, timeoutMs, abortSignal);
+      } finally {
+        destroyNodeReadable(body);
+      }
     };
-
-    if (body && isNodeReadable(body)) {
-      (requestInit as { duplex?: "half" }).duplex = "half";
-    }
-
-    const makeRequest = () =>
-      fetchWithTimeout(fetchFn, url, requestInit, timeoutMs, abortSignal);
 
     const response = await requestWithRetries(makeRequest, { maxRetries, retryBackoff, retryStatusCodes });
 
@@ -946,6 +960,15 @@ function isStorageEmulatorUrl(url: string): boolean {
 
 function isNodeReadable(value: unknown): value is NodeJS.ReadableStream {
   return Boolean(value) && typeof value === "object" && typeof (value as NodeJS.ReadableStream).pipe === "function";
+}
+
+function destroyNodeReadable(value: unknown): void {
+  const destroy = isNodeReadable(value)
+    ? (value as NodeJS.ReadableStream & { destroy?: () => void }).destroy
+    : undefined;
+  if (destroy) {
+    destroy.call(value);
+  }
 }
 
 async function createFileReadStream(filePath: string): Promise<NodeJS.ReadableStream> {

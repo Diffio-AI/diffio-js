@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, type ReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DiffioClient } from "../../src/Client";
@@ -69,6 +69,63 @@ describe("DiffioClient wire", () => {
     }
   });
 
+  test("createProject opens a fresh file stream when an upload is retried", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "diffio-sdk-retry-"));
+    const filePath = join(dir, "retry.bin");
+    const fileContents = Buffer.from("retry uploads must preserve every byte\n", "utf8");
+    writeFileSync(filePath, fileContents);
+
+    const uploadBodies: Buffer[] = [];
+    const uploadStreams: ReadStream[] = [];
+    const fetchMock: typeof fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/create_project")) {
+        return new Response(
+          JSON.stringify({
+            apiProjectId: "proj_retry",
+            uploadUrl: "https://upload.example/retry.bin",
+            uploadMethod: "PUT",
+            objectPath: "uploads/retry.bin",
+            bucket: "diffio",
+            expiresAt: "2024-01-01T00:00:00Z"
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const stream = init?.body as unknown as ReadStream;
+      const chunks: Buffer[] = [];
+      uploadStreams.push(stream);
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      uploadBodies.push(Buffer.concat(chunks));
+
+      return new Response(JSON.stringify({}), {
+        status: uploadBodies.length === 1 ? 503 : 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    const client = new DiffioClient({
+      apiKey: "test",
+      baseUrl: "https://api.example",
+      fetch: fetchMock,
+      maxRetries: 1,
+      retryBackoff: 0
+    });
+
+    try {
+      await client.createProject({ filePath });
+
+      expect(uploadBodies).toEqual([fileContents, fileContents]);
+      expect(uploadStreams).toHaveLength(2);
+      expect(uploadStreams[1]).not.toBe(uploadStreams[0]);
+      expect(uploadStreams.every((stream) => stream.closed && stream.destroyed)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("createGeneration routes to model endpoint", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
@@ -98,9 +155,10 @@ describe("DiffioClient wire", () => {
       modelKey: "diffio-2",
       status: "queued"
     });
+    expect("idempotentReplay" in response).toBe(false);
   });
 
-  test("createGeneration routes to Diffio 3.5 endpoint", async () => {
+  test("generation resource sends idempotency key and parses replay response", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
 
@@ -111,23 +169,32 @@ describe("DiffioClient wire", () => {
         Authorization: "Bearer test",
         "Content-Type": "application/json"
       })
-      .jsonBody({ apiProjectId: "proj_123" })
+      .jsonBody({
+        apiProjectId: "proj_123",
+        idempotencyKey: "restore-proj-123"
+      })
       .respondWith()
       .statusCode(200)
       .jsonBody({
         generationId: "gen_35",
         apiProjectId: "proj_123",
         modelKey: "diffio-3.5",
-        status: "queued"
+        status: "queued",
+        idempotentReplay: true
       })
       .build();
 
-    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-3.5" });
+    const response = await client.generations.create({
+      apiProjectId: "proj_123",
+      model: "diffio-3.5",
+      idempotencyKey: "restore-proj-123"
+    });
     expect(response).toEqual({
       generationId: "gen_35",
       apiProjectId: "proj_123",
       modelKey: "diffio-3.5",
-      status: "queued"
+      status: "queued",
+      idempotentReplay: true
     });
   });
 

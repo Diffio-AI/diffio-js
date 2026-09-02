@@ -52,7 +52,10 @@ export function parseCreateGenerationResponse(data: any): CreateGenerationRespon
     generationId: data.generationId,
     apiProjectId: data.apiProjectId,
     modelKey: data.modelKey,
-    status: data.status
+    status: data.status,
+    ...(data.idempotentReplay == null
+      ? {}
+      : { idempotentReplay: Boolean(data.idempotentReplay) })
   };
 }
 
