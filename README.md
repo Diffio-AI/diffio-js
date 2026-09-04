@@ -69,6 +69,16 @@ console.log(generation.generationId, generation.idempotentReplay ?? false);
 Reuse the same `idempotencyKey` when retrying generation creation for a project. The API then
 returns the existing generation with `idempotentReplay: true` instead of creating another generation.
 
+Generation creation automatically retries only when you supply a nonblank `idempotencyKey`, reusing
+the same key and request body for every attempt. Without a key, generation creation is attempted
+once, including on network errors, even if client or request options enable retries. Other requests
+retain their configured retry policy. Reuse your original key and request body when manually
+retrying after an uncertain response.
+
+`waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
+`complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
+or usage settlement is still pending.
+
 ## Audio isolation helper
 
 ```ts

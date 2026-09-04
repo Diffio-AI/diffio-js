@@ -184,6 +184,7 @@ export class DiffioClient {
     await this._requestBinary(method, uploadUrl, bodyFactory, requestOptions, extraHeaders, true);
   }
 
+  /** Retries generation admission only when the caller supplies a nonblank idempotency key. */
   async createGeneration(options: {
     apiProjectId: string;
     model?: ModelKey;
@@ -209,7 +210,10 @@ export class DiffioClient {
       payload.idempotencyKey = idempotencyKey;
     }
 
-    const response = await this._requestJson("POST", endpoint, payload, requestOptions);
+    const generationRequestOptions = idempotencyKey?.trim()
+      ? requestOptions
+      : { ...requestOptions, maxRetries: 0 };
+    const response = await this._requestJson("POST", endpoint, payload, generationRequestOptions);
     return parseCreateGenerationResponse(response);
   }
 
@@ -249,6 +253,7 @@ export class DiffioClient {
     return parseGenerationProgressResponse(response);
   }
 
+  /** Waits for the authoritative overall status, including artifact publication and settlement. */
   async waitForGeneration(options: {
     generationId: string;
     apiProjectId?: string;
