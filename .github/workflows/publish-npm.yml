@@ -155,6 +155,7 @@ jobs:
         env:
           NEXT_VERSION: ${{ steps.version.outputs.next_version }}
         run: |
+          set -o pipefail
           if npm publish --access public 2>&1 | tee /tmp/npm-publish.log; then
             echo "Published successfully"
             echo "status=published" >> "$GITHUB_OUTPUT"
