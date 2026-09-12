@@ -101,11 +101,26 @@ jobs:
           }
           NODE
 
+      - name: Check if exact version already exists
+        id: check_exact
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          echo "Checking if diffio@$NEXT_VERSION already exists on npm..."
+          if npm view "diffio@$NEXT_VERSION" version 2>/dev/null; then
+            echo "Version $NEXT_VERSION already published - skipping"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $NEXT_VERSION not found - will publish"
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Bump package.json version
-        if: ${{ steps.version.outputs.bump_needed == 'true' }}
+        if: ${{ steps.version.outputs.bump_needed == 'true' && steps.check_exact.outputs.already_published != 'true' }}
         run: npm version "${{ steps.version.outputs.next_version }}" --no-git-tag-version
 
       - name: Sync SDK version constant
+        if: ${{ steps.check_exact.outputs.already_published != 'true' }}
         env:
           NEXT_VERSION: ${{ steps.version.outputs.next_version }}
         run: |
@@ -127,13 +142,58 @@ jobs:
           NODE
 
       - name: Test
-        if: ${{ steps.version.outputs.publish == 'true' }}
+        if: ${{ steps.version.outputs.publish == 'true' && steps.check_exact.outputs.already_published != 'true' }}
         run: npm test
 
       - name: Build
-        if: ${{ steps.version.outputs.publish == 'true' }}
+        if: ${{ steps.version.outputs.publish == 'true' && steps.check_exact.outputs.already_published != 'true' }}
         run: npm run build
 
       - name: Publish to npm
-        if: ${{ steps.version.outputs.publish == 'true' }}
-        run: npm publish --access public
+        id: publish
+        if: ${{ steps.version.outputs.publish == 'true' && steps.check_exact.outputs.already_published != 'true' }}
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next_version }}
+        run: |
+          if npm publish --access public 2>&1 | tee /tmp/npm-publish.log; then
+            echo "Published successfully"
+            echo "status=published" >> "$GITHUB_OUTPUT"
+          else
+            exit_code=$?
+            if grep -qE 'E409|Cannot publish over previously' /tmp/npm-publish.log; then
+              echo "Publish returned E409 - checking if version is live..."
+              sleep 2
+              if npm view "diffio@$NEXT_VERSION" version 2>/dev/null; then
+                echo "Version $NEXT_VERSION confirmed live on npm - treating as success"
+                echo "status=already_live" >> "$GITHUB_OUTPUT"
+              else
+                echo "E409 but version not found on npm - failing"
+                exit $exit_code
+              fi
+            else
+              exit $exit_code
+            fi
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next_version }}
+          PUBLISH_NEEDED: ${{ steps.version.outputs.publish }}
+          ALREADY_PUBLISHED: ${{ steps.check_exact.outputs.already_published }}
+          PUBLISH_STATUS: ${{ steps.publish.outputs.status }}
+        run: |
+          echo "### Publish Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Target version**: $NEXT_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$ALREADY_PUBLISHED" == "true" ]]; then
+            echo "- **Result**: Skipped (version already on npm)" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PUBLISH_STATUS" == "already_live" ]]; then
+            echo "- **Result**: Skipped (E409 race, version confirmed live)" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PUBLISH_STATUS" == "published" ]]; then
+            echo "- **Result**: Published successfully" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PUBLISH_NEEDED" != "true" ]]; then
+            echo "- **Result**: Skipped (no publish needed)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Result**: Unknown or failed" >> "$GITHUB_STEP_SUMMARY"
+          fi
