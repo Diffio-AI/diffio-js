@@ -253,7 +253,7 @@ export class DiffioClient {
     return parseGenerationProgressResponse(response);
   }
 
-  /** Waits for the authoritative overall status, including artifact publication and settlement. */
+  /** Waits for media completion and settlement. Diffio 2.0 transcription may still be pending or unavailable. */
   async waitForGeneration(options: {
     generationId: string;
     apiProjectId?: string;
@@ -1023,6 +1023,10 @@ function setRestoreError(metadata: RestoreMetadata, error: unknown): void {
   metadata.error = message;
   metadata.exceptionType = error instanceof Error ? error.name : typeof error;
   metadata.exceptionMessage = message;
+  if (error instanceof DiffioApiError) {
+    metadata.statusCode = error.statusCode;
+    metadata.responseBody = error.responseBody;
+  }
 }
 
 function attachRestoreMetadata(error: unknown, metadata: RestoreMetadata): void {

@@ -1,5 +1,5 @@
 import type { DiffioClient } from "../../../../Client";
-import type { AudioIsolationResult, ModelKey, RestoreMetadata } from "../../../types";
+import type { AudioIsolationResult, GenerationProgressResponse, ModelKey, RestoreMetadata } from "../../../types";
 
 export interface AudioIsolationRestoreOptions {
   filePath: string;
@@ -15,7 +15,7 @@ export interface AudioIsolationRestoreOptions {
   pollInterval?: number;
   timeout?: number;
   timeoutInSeconds?: number;
-  onProgress?: (progress: unknown) => void | Promise<void>;
+  onProgress?: (progress: GenerationProgressResponse) => void | Promise<void>;
   showProgress?: boolean;
   requestOptions?: DiffioClient.RequestOptions;
   progressRequestOptions?: DiffioClient.RequestOptions;
