@@ -9,6 +9,7 @@ import type {
   GenerationDownloadResponse,
   GenerationProgressResponse,
   GenerationProgressStage,
+  GenerationTranscription,
   ListProjectGenerationsResponse,
   ListProjectsResponse,
   ProjectGenerationSummary,
@@ -93,6 +94,7 @@ export function parseGenerationProgressStage(data: any): GenerationProgressStage
 
 export function parseGenerationProgressResponse(data: any): GenerationProgressResponse {
   const restoredVideo = data?.restoredVideo;
+  const transcription = parseGenerationTranscription(data?.transcription);
   return {
     generationId: data.generationId,
     apiProjectId: data.apiProjectId,
@@ -101,6 +103,7 @@ export function parseGenerationProgressResponse(data: any): GenerationProgressRe
     preProcessing: parseGenerationProgressStage(data.preProcessing),
     inference: parseGenerationProgressStage(data.inference),
     restoredVideo: restoredVideo ? parseGenerationProgressStage(restoredVideo) : null,
+    ...(transcription ? { transcription } : {}),
     error: data.error ?? null,
     errorDetails: data.errorDetails ?? null
   };
@@ -173,6 +176,7 @@ export function parseWebhookConfigureResponse(data: any): WebhookConfigureRespon
 }
 
 export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
+  const transcription = parseGenerationTranscription(data?.transcription);
   return {
     eventType: data.eventType,
     eventId: data.eventId,
@@ -183,9 +187,21 @@ export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
     status: data.status,
     hasVideo: data.hasVideo ?? null,
     modelKey: data.modelKey ?? null,
+    ...(transcription ? { transcription } : {}),
     error: data.error ?? null,
     errorDetails: data.errorDetails ?? null
   };
+}
+
+function parseGenerationTranscription(data: unknown): GenerationTranscription | undefined {
+  if (data == null || typeof data !== "object" || !("status" in data)) {
+    return undefined;
+  }
+  const { status } = data;
+  if (status === "pending" || status === "available" || status === "unavailable") {
+    return { status };
+  }
+  return undefined;
 }
 
 export function createAudioIsolationResult(

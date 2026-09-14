@@ -7,6 +7,11 @@ export type WebhookEventType =
   | "generation.failed"
   | "generation.completed";
 export type GenerationWebhookStatus = "queued" | "processing" | "error" | "complete";
+export type TranscriptionStatus = "pending" | "available" | "unavailable";
+
+export interface GenerationTranscription {
+  status: TranscriptionStatus;
+}
 
 export interface CreateProjectResponse {
   apiProjectId: string;
@@ -72,6 +77,8 @@ export interface GenerationProgressResponse {
   preProcessing: GenerationProgressStage;
   inference: GenerationProgressStage;
   restoredVideo?: GenerationProgressStage | null;
+  /** Independent of media completion; omitted by older API versions. */
+  transcription?: GenerationTranscription;
   error?: string | null;
   errorDetails?: string | null;
 }
@@ -144,6 +151,8 @@ export interface GenerationWebhookEvent {
   status: GenerationWebhookStatus | string;
   hasVideo?: boolean | null;
   modelKey?: ModelKey | string | null;
+  /** A completed Diffio 2.0 generation may still have a pending or unavailable transcript. */
+  transcription?: GenerationTranscription;
   error?: string | null;
   errorDetails?: string | null;
 }
@@ -166,4 +175,7 @@ export interface RestoreMetadata {
   errorDetails: string | null;
   exceptionType: string | null;
   exceptionMessage: string | null;
+  /** HTTP error details retained when a restore helper returns instead of throwing. */
+  statusCode?: number;
+  responseBody?: unknown;
 }
