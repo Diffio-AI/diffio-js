@@ -77,7 +77,11 @@ retrying after an uncertain response.
 
 `waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
 `complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
-or usage settlement is still pending.
+or usage settlement is still pending. For Diffio 2.0, `complete` means restored media is ready;
+transcription can still be `pending`, become `available` later, or finish as `unavailable`.
+Read `progress.transcription?.status` independently. Older responses omit `transcription`;
+absence does not establish availability. Unavailable transcription does not fail completed
+Diffio 2.0 media. Diffio 3.5 requires its transcript before restoration can complete.
 
 ## Audio isolation helper
 
@@ -136,6 +140,7 @@ const progress = await client.generations.getProgress({
 });
 
 console.log(progress.status);
+console.log(progress.transcription?.status ?? "not reported");
 ```
 
 ## Generation download
@@ -153,15 +158,42 @@ const download = await client.generations.getDownload({
 console.log(download.downloadUrl);
 ```
 
-Set `downloadType` to `"transcript"` to fetch the transcript JSON artifact when the generation has one.
+Set `downloadType` to `"transcript"` to fetch the transcript JSON artifact when available.
+Pending transcripts raise `DiffioApiError` with `statusCode === 409` and error code
+`TRANSCRIPT_PENDING`. Unavailable transcripts return `404` with `TRANSCRIPT_UNAVAILABLE`.
+The `responseBody` also includes `transcription.status`. Check the error code to distinguish
+these from other 409 or 404 errors.
 
 ```ts
-const transcript = await client.generations.getDownload({
-  generationId: "gen_123",
-  apiProjectId: "proj_123",
-  downloadType: "transcript"
-});
+import { DiffioApiError } from "diffio";
+
+try {
+  const transcript = await client.generations.getDownload({
+    generationId: "gen_123",
+    apiProjectId: "proj_123",
+    downloadType: "transcript"
+  });
+  console.log(transcript.downloadUrl);
+} catch (error) {
+  if (!(error instanceof DiffioApiError)) throw error;
+  const body = error.responseBody;
+  const code = body && typeof body === "object" && "code" in body ? body.code : undefined;
+  if (error.statusCode === 409 && code === "TRANSCRIPT_PENDING") {
+    console.log("Transcript pending; check progress and retry later.");
+  } else if (error.statusCode === 404 && code === "TRANSCRIPT_UNAVAILABLE") {
+    console.log("Transcript unavailable; restored media remains available.");
+  } else {
+    throw error;
+  }
+}
 ```
+
+`restoreAudio` with `downloadType: "transcript"` also attempts a transcript download after
+media completion. It does not wait for pending transcription. With the default `raiseOnError: false`,
+it returns `[null, info]` and preserves `info.statusCode` and `info.responseBody`; `info.status`
+can still be `complete` because media restoration succeeded. With `raiseOnError: true`, it throws
+`DiffioApiError` and attaches metadata as `error.restoreInfo`. Poll progress and retry the download
+explicitly for the same generation. Audio and video downloads proceed independently of transcription.
 
 ## Account, keys, usage, and webhook configuration
 
@@ -226,6 +258,11 @@ console.log(event.svixMessageId);
 ## Verify webhook signatures
 
 Use the raw request body (not parsed JSON) plus the `svix-*` headers and your webhook signing secret.
+
+Verified events expose the same optional `event.transcription` object as generation progress.
+A Diffio 2.0 `generation.completed` event can report `pending` or `unavailable` transcription.
+Later transcript publication does not emit another completion event; poll progress when you need
+to follow a pending transcript. Older events can omit `transcription`.
 
 ```ts
 import express from "express";
