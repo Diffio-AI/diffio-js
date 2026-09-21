@@ -1,4 +1,3 @@
-import type { GenerationDownloadOptions, GenerationMixOptions, GenerationPlaybackOptions } from "./api/resources/generations/client/Client";
 import type { BaseClientOptions, BaseRequestOptions, NormalizedClientOptions } from "./BaseClient";
 import { normalizeClientOptions } from "./BaseClient";
 import { mergeHeaders, mergeOnlyDefinedHeaders, resolveHeaders } from "./core/headers";
@@ -29,8 +28,6 @@ import type {
   CreateGenerationResponse,
   CreateProjectResponse,
   GenerationDownloadResponse,
-  GenerationMixResponse,
-  GenerationPlaybackResponse,
   GenerationProgressResponse,
   ListProjectGenerationsResponse,
   ListProjectsResponse,
@@ -57,8 +54,7 @@ const MODEL_ENDPOINTS = {
   "diffio-2": "diffio-2.0-generation",
   "diffio-2-flash": "diffio-2.0-flash-generation",
   "diffio-3.4": "diffio-3.4-generation",
-  "diffio-3.5": "diffio-3.5-generation",
-  "diffio-4.0": "diffio-4.0-generation"
+  "diffio-3.5": "diffio-3.5-generation"
 } as const satisfies Record<ModelKey, string>;
 const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_BACKOFF = 0.5;
@@ -309,8 +305,13 @@ export class DiffioClient {
     );
   }
 
-  async getGenerationDownload(options: GenerationDownloadOptions): Promise<GenerationDownloadResponse> {
-    const { generationId, apiProjectId, downloadType, requestOptions, artifact, format, backgroundGain } = options;
+  async getGenerationDownload(options: {
+    generationId: string;
+    apiProjectId: string;
+    downloadType?: string;
+    requestOptions?: DiffioClient.RequestOptions;
+  }): Promise<GenerationDownloadResponse> {
+    const { generationId, apiProjectId, downloadType, requestOptions } = options;
     const payload: Record<string, unknown> = { generationId, apiProjectId };
     if (downloadType != null) {
       if (downloadType !== "audio" && downloadType !== "video" && downloadType !== "transcript") {
@@ -318,66 +319,8 @@ export class DiffioClient {
       }
       payload.downloadType = downloadType;
     }
-    if (artifact !== undefined) {
-      if (!["mix", "speech", "background"].includes(artifact)) throw new DiffioApiError("Invalid artifact");
-      payload.artifact = artifact;
-    }
-    if (format !== undefined) {
-      if (!["mp3", "flac", "mp4"].includes(format)) throw new DiffioApiError("Invalid format");
-      payload.format = format;
-    }
-    if (backgroundGain !== undefined) {
-      validateBackgroundGain(backgroundGain);
-      payload.backgroundGain = backgroundGain;
-    }
-    const timeout = options.exportTimeoutInSeconds ?? 300;
-    if (!Number.isFinite(timeout) || timeout <= 0) throw new DiffioApiError("exportTimeoutInSeconds must be positive");
-    const budget = createAbortSignal(timeout * 1000, requestOptions?.abortSignal);
-    try {
-      while (true) {
-        budget.signal?.throwIfAborted();
-        const response = await this._requestJson("POST", "get_generation_download", payload, {
-          ...requestOptions, abortSignal: budget.signal
-        });
-        if (response.status !== "pending") return parseGenerationDownloadResponse(response);
-        if (typeof response.exportId !== "string" || !response.exportId ||
-            typeof response.retryAfterSeconds !== "number" ||
-            !Number.isFinite(response.retryAfterSeconds) || response.retryAfterSeconds <= 0) {
-          throw new DiffioApiError("Invalid pending export response");
-        }
-        await waitForExport(Math.min(response.retryAfterSeconds, 30), budget.signal);
-      }
-    } catch (error) {
-      if (budget.didTimeout()) throw new DiffioTimeoutError("Timed out waiting for export");
-      throw error;
-    } finally {
-      budget.cleanup();
-    }
-  }
-
-  async getGenerationPlayback(options: GenerationPlaybackOptions): Promise<GenerationPlaybackResponse> {
-    const { generationId, apiProjectId, requestOptions, startChunk, chunkCount } = options;
-    if (startChunk !== undefined && (!Number.isSafeInteger(startChunk) || startChunk < 0)) {
-      throw new DiffioApiError("startChunk must be a non-negative integer");
-    }
-    if (chunkCount !== undefined && (!Number.isSafeInteger(chunkCount) || chunkCount < 1 || chunkCount > 16)) {
-      throw new DiffioApiError("chunkCount must be an integer between 1 and 16");
-    }
-    const payload: Record<string, unknown> = { generationId, apiProjectId };
-    if (startChunk !== undefined) payload.startChunk = startChunk;
-    if (chunkCount !== undefined) payload.chunkCount = chunkCount;
-    return this._requestJson("POST", "get_generation_playback", payload, requestOptions);
-  }
-
-  async updateGenerationMix(options: GenerationMixOptions): Promise<GenerationMixResponse> {
-    const { generationId, apiProjectId, backgroundGain, expectedRevision, requestOptions } = options;
-    validateBackgroundGain(backgroundGain);
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-      throw new DiffioApiError("expectedRevision must be a non-negative integer");
-    }
-    return this._requestJson("POST", "update_generation_mix", {
-      generationId, apiProjectId, backgroundGain, expectedRevision
-    }, requestOptions);
+    const response = await this._requestJson("POST", "get_generation_download", payload, requestOptions);
+    return parseGenerationDownloadResponse(response);
   }
 
   async getAccountSettings(options: {
@@ -1130,26 +1073,4 @@ function formatProgress(progress: GenerationProgressResponse): string {
 
 async function sleepSeconds(seconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-}
-
-function validateBackgroundGain(value: number): void {
-  if (!Number.isFinite(value) || value < 0 || value > 1) {
-    throw new DiffioApiError("backgroundGain must be finite and between 0 and 1");
-  }
-}
-
-async function waitForExport(seconds: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }, seconds * 1000);
-    signal?.addEventListener("abort", abort, { once: true });
-  });
 }

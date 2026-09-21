@@ -1,4 +1,4 @@
-export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3.4" | "diffio-3.5" | "diffio-4.0";
+export type ModelKey = "diffio-2" | "diffio-2-flash" | "diffio-3.4" | "diffio-3.5";
 export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =
@@ -178,18 +178,4 @@ export interface RestoreMetadata {
   /** HTTP error details retained when a restore helper returns instead of throwing. */
   statusCode?: number;
   responseBody?: unknown;
-}
-
-export type GenerationArtifact = "mix" | "speech" | "background";
-export type GenerationExportFormat = "mp3" | "flac" | "mp4";
-
-export interface GenerationMixResponse {
-  generationId: string;
-  mix: { backgroundGain: number; revision: number };
-}
-
-export interface GenerationPlaybackResponse {
-  generationId: string;
-  /** Versioned manifest containing signed playback chunk URLs. */
-  manifest: Record<string, unknown>;
 }

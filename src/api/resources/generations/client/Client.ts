@@ -3,10 +3,6 @@ import type {
   CreateGenerationResponse,
   GenerationDownloadResponse,
   GenerationProgressResponse,
-  GenerationArtifact,
-  GenerationExportFormat,
-  GenerationMixResponse,
-  GenerationPlaybackResponse,
   ModelKey
 } from "../../../types";
 
@@ -29,27 +25,7 @@ export interface GenerationDownloadOptions {
   generationId: string;
   apiProjectId: string;
   downloadType?: string;
-  artifact?: GenerationArtifact;
-  format?: GenerationExportFormat;
-  backgroundGain?: number;
-  /** Maximum time to wait for an asynchronous export, in seconds (default 300). */
-  exportTimeoutInSeconds?: number;
   requestOptions?: DiffioClient.RequestOptions;
-}
-
-export interface GenerationPlaybackOptions {
-  generationId: string;
-  apiProjectId: string;
-  /** First playback chunk to fetch (default 0). */
-  startChunk?: number;
-  /** Number of signed chunks to fetch, 1–16 (default 8). */
-  chunkCount?: number;
-  requestOptions?: DiffioClient.RequestOptions;
-}
-
-export interface GenerationMixOptions extends Omit<GenerationPlaybackOptions, "startChunk" | "chunkCount"> {
-  backgroundGain: number;
-  expectedRevision: number;
 }
 
 export interface GenerationWaitOptions {
@@ -89,14 +65,6 @@ export class GenerationsClient {
 
   async getDownload(options: GenerationDownloadOptions): Promise<GenerationDownloadResponse> {
     return this._parent.getGenerationDownload(options);
-  }
-
-  async getPlayback(options: GenerationPlaybackOptions): Promise<GenerationPlaybackResponse> {
-    return this._parent.getGenerationPlayback(options);
-  }
-
-  async updateMix(options: GenerationMixOptions): Promise<GenerationMixResponse> {
-    return this._parent.updateGenerationMix(options);
   }
 
   async waitForComplete(options: GenerationWaitOptions): Promise<GenerationProgressResponse> {
