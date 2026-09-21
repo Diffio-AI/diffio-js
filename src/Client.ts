@@ -54,7 +54,9 @@ const MODEL_ENDPOINTS = {
   "diffio-2": "diffio-2.0-generation",
   "diffio-2-flash": "diffio-2.0-flash-generation",
   "diffio-3.4": "diffio-3.4-generation",
-  "diffio-3.5": "diffio-3.5-generation"
+  "diffio-3.5": "diffio-3.5-generation",
+  "diffio-4.0-flash": "diffio-4.0-flash-generation",
+  "diffio-4.0-pro": "diffio-4.0-pro-generation"
 } as const satisfies Record<ModelKey, string>;
 const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_BACKOFF = 0.5;
