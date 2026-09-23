@@ -195,7 +195,7 @@ export class DiffioClient {
     idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<CreateGenerationResponse> {
-    const { apiProjectId, model = "diffio-2", sampling, params, idempotencyKey, requestOptions } = options;
+    const { apiProjectId, model = "diffio-4.0-flash", sampling, params, idempotencyKey, requestOptions } = options;
     const endpoint = MODEL_ENDPOINTS[model];
     if (!endpoint) {
       throw new DiffioApiError(`Unsupported model: ${model}`);
