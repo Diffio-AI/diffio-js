@@ -111,8 +111,9 @@ retrying after an uncertain response.
 `waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
 `complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
 or usage settlement is still pending. They poll for up to 600 seconds unless you pass `timeout`
-or `timeoutInSeconds`. `complete` means restored media is ready; transcription can still be
-`pending`, become `available` later, or finish as `unavailable`. Read
+or `timeoutInSeconds`. `complete` means restored media is ready. Diffio 4.5 transcribes the recording before
+restoration starts, so a completed generation has its transcript unless transcription finished as
+`unavailable`; while a generation runs, transcription can be `pending`, `available`, or `unavailable`. Read
 `progress.transcription?.status` independently. Older responses omit `transcription`; absence does
 not establish availability. Unavailable transcription does not fail completed media.
 
@@ -304,9 +305,9 @@ console.log(event.svixMessageId);
 Use the raw request body (not parsed JSON) plus the `svix-*` headers and your webhook signing secret.
 
 Verified events expose the same optional `event.transcription` object as generation progress.
-A `generation.completed` event can report `pending` or `unavailable` transcription.
-Later transcript publication does not emit another completion event; poll progress when you need
-to follow a pending transcript. Older events can omit `transcription`.
+A `generation.completed` event reports `available` transcription, or `unavailable` when no
+transcript could be produced; completion does not wait for a later transcript. Older events can omit
+`transcription`.
 
 ```ts
 import express from "express";
