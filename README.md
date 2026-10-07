@@ -84,7 +84,6 @@ const project = await client.createProject({
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
   model: "diffio-4.5-flash",
-  sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001"
 });
 
@@ -126,7 +125,6 @@ const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
   model: "diffio-4.5-flash",
-  sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001"
 });
 
@@ -148,7 +146,6 @@ const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
   model: "diffio-4.5-flash",
-  sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001",
   onProgress: (progress) => console.log(progress.status)
 });
