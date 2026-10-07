@@ -1,10 +1,5 @@
-export type ModelKey =
-  | "diffio-2"
-  | "diffio-2-flash"
-  | "diffio-3.4"
-  | "diffio-3.5"
-  | "diffio-4.0-flash"
-  | "diffio-4.0-pro";
+/** Models new generations can use (api/model_registry.json in diffio-ui); each has its own endpoint. */
+export type ModelKey = "diffio-4.5-flash" | "diffio-4.5-pro";
 export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =
@@ -19,13 +14,30 @@ export interface GenerationTranscription {
   status: TranscriptionStatus;
 }
 
+/** The edge upload session create_project opened; the upload token stays inside the SDK. */
+export interface ProjectUploadSession {
+  uploadSessionId: string;
+  edgeBaseUrl: string;
+  objectKey: string;
+  partSizeBytes: number;
+  maxBytes: number;
+  expiresAt: string;
+}
+
+/** Response of `/v1/complete_project_upload`; repeated calls return the same answer. */
+export interface CompleteProjectUploadResponse {
+  apiProjectId: string;
+  status: "uploaded" | string;
+  sizeBytes: number | null;
+}
+
+/** A created project whose media `createProject` already uploaded through the edge and confirmed. */
 export interface CreateProjectResponse {
   apiProjectId: string;
-  uploadUrl: string;
-  uploadMethod: string;
+  upload: ProjectUploadSession;
   objectPath: string;
-  bucket: string;
   expiresAt: string;
+  uploadCompletion: CompleteProjectUploadResponse;
 }
 
 export interface ProjectSummary {
@@ -46,7 +58,8 @@ export interface ListProjectsResponse {
 export interface CreateGenerationResponse {
   generationId: string;
   apiProjectId: string;
-  modelKey: ModelKey | string;
+  /** A string because generations created before a model was retired keep their original key. */
+  modelKey: string;
   status: string;
   idempotentReplay?: boolean;
 }
@@ -54,7 +67,8 @@ export interface CreateGenerationResponse {
 export interface ProjectGenerationSummary {
   generationId: string;
   status: string;
-  modelKey?: ModelKey | string | null;
+  /** Older generations keep the key of the model that produced them. */
+  modelKey?: string | null;
   progress?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -75,6 +89,41 @@ export interface GenerationProgressStage {
   errorDetails?: string | null;
 }
 
+/** The one stage a generation is in, as `get_generation_progress` reports it. */
+export type GenerationStage =
+  | "pending"
+  | "preparing"
+  | "transcribing"
+  | "queued"
+  | "starting"
+  | "downloading"
+  | "decoding"
+  | "restoring"
+  | "finalizing"
+  | "uploading"
+  | "complete"
+  | "failed";
+
+/** Progress within the current fleet stage; every field is optional and present only when known. */
+export interface GenerationStageProgress {
+  overallPercent?: number;
+  stagePercent?: number;
+  bytesDone?: number;
+  bytesTotal?: number;
+  availableThroughSeconds?: number;
+  durationSeconds?: number;
+}
+
+/** Why a queued generation waits for a Mac fleet worker. */
+export interface GenerationQueueStatus {
+  position: number | null;
+  connectedWorkers: number | null;
+  idleWorkers: number | null;
+  busyWorkers: number | null;
+  waitReason: "all_busy" | "no_workers" | "next_in_line" | string | null;
+  message: string;
+}
+
 export interface GenerationProgressResponse {
   generationId: string;
   apiProjectId: string;
@@ -83,6 +132,12 @@ export interface GenerationProgressResponse {
   preProcessing: GenerationProgressStage;
   inference: GenerationProgressStage;
   restoredVideo?: GenerationProgressStage | null;
+  /** Omitted by older API versions. */
+  stage?: GenerationStage | string;
+  /** Present while a fleet stage reports progress. */
+  stageProgress?: GenerationStageProgress;
+  /** Present while the generation waits in the fleet queue. */
+  queue?: GenerationQueueStatus;
   /** Independent of media completion; omitted by older API versions. */
   transcription?: GenerationTranscription;
   error?: string | null;
@@ -96,7 +151,6 @@ export interface GenerationDownloadResponse {
   downloadUrl: string;
   fileName: string;
   storagePath: string;
-  bucket: string;
   mimeType: string;
 }
 
@@ -156,8 +210,9 @@ export interface GenerationWebhookEvent {
   generationId: string;
   status: GenerationWebhookStatus | string;
   hasVideo?: boolean | null;
-  modelKey?: ModelKey | string | null;
-  /** A completed Diffio 2.0 generation may still have a pending or unavailable transcript. */
+  /** Older generations keep the key of the model that produced them. */
+  modelKey?: string | null;
+  /** A completed generation may still have a pending or unavailable transcript. */
   transcription?: GenerationTranscription;
   error?: string | null;
   errorDetails?: string | null;

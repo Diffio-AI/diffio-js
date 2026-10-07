@@ -1,6 +1,6 @@
 # Diffio JS SDK
 
-The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, upload, generation, progress checks, and download URLs.
+The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, edge upload, Diffio 4.5 generations, progress checks, and download URLs.
 
 ## Install
 
@@ -42,9 +42,34 @@ const projects = await client.listProjects({
 });
 ```
 
+## Models
+
+| Model | `model` value | Endpoint | Notes |
+|---|---|---|---|
+| Diffio 4.5 Flash | `diffio-4.5-flash` | `/v1/diffio-4.5-flash-generation` | Default. Fast, high quality speech restoration. |
+| Diffio 4.5 Pro | `diffio-4.5-pro` | `/v1/diffio-4.5-pro-generation` | Best quality. Paid accounts only. |
+
+Omitting `model` uses `diffio-4.5-flash`. Earlier models (`diffio-2`, `diffio-2-flash`, `diffio-3.2`,
+`diffio-3.4`, `diffio-3.5`, `diffio-4.0-flash`, `diffio-4.0-pro`) are retired: the SDK refuses them
+before sending a request, and the API answers their endpoints with HTTP 410 `model_retired`.
+Generations created before a model was retired keep their original `modelKey`, so response
+`modelKey` fields are typed as `string`.
+
 ## Create a project and generation
 
-`createProject` uploads the file and returns the project metadata.
+`createProject` creates the project, uploads the file through Diffio's upload edge, and confirms
+the upload, so the project is ready for a generation when it returns.
+
+The upload follows the session `create_project` returns: the SDK starts a multipart upload at
+`{edgeBaseUrl}/v1/uploads/start`, sends the file in parts of `partSizeBytes` (32 MiB, three at a time)
+to `/v1/uploads/parts/{partNumber}`, completes it with `/v1/uploads/complete`, and then calls
+`/v1/complete_project_upload`. Each part is tried up to four times on network errors, timeouts,
+`408`, `429`, and `5xx` answers. A failed upload is aborted and raises `DiffioUploadError` (a
+`DiffioApiError`) with `uploadErrorCode` (`upload/too-large`, `upload/unauthorized`,
+`upload/rejected`, `upload/network`, `upload/server`, `upload/invalid-response`, or
+`upload/canceled`), the edge's `edgeErrorCode` when it sent one, and the `apiProjectId`. Files
+larger than the session's `maxBytes` (2 GiB) are refused before any bytes are sent. The upload token
+is used only inside the SDK and is not part of the returned project.
 
 ```ts
 import { DiffioClient } from "diffio";
@@ -58,12 +83,20 @@ const project = await client.createProject({
 
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
-  model: "diffio-4.0-flash",
+  model: "diffio-4.5-flash",
   sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001"
 });
 
 console.log(generation.generationId, generation.idempotentReplay ?? false);
+console.log(project.upload.objectKey, project.uploadCompletion.sizeBytes);
+```
+
+If `createProject` uploaded the file but the confirmation call failed, confirm it yourself. The call
+is idempotent, and Diffio also records the upload on its own shortly after the edge completes it.
+
+```ts
+await client.projects.completeUpload({ apiProjectId: "proj_123" });
 ```
 
 Reuse the same `idempotencyKey` when retrying generation creation for a project. The API then
@@ -77,11 +110,11 @@ retrying after an uncertain response.
 
 `waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
 `complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
-or usage settlement is still pending. For Diffio 2.0, `complete` means restored media is ready;
-transcription can still be `pending`, become `available` later, or finish as `unavailable`.
-Read `progress.transcription?.status` independently. Older responses omit `transcription`;
-absence does not establish availability. Unavailable transcription does not fail completed
-Diffio 2.0 media. Diffio 3.5 requires its transcript before restoration can complete.
+or usage settlement is still pending. They poll for up to 600 seconds unless you pass `timeout`
+or `timeoutInSeconds`. `complete` means restored media is ready; transcription can still be
+`pending`, become `available` later, or finish as `unavailable`. Read
+`progress.transcription?.status` independently. Older responses omit `transcription`; absence does
+not establish availability. Unavailable transcription does not fail completed media.
 
 ## Audio isolation helper
 
@@ -91,7 +124,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
-  model: "diffio-4.0-flash",
+  model: "diffio-4.5-flash",
   sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001"
 });
@@ -113,7 +146,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
-  model: "diffio-4.0-flash",
+  model: "diffio-4.5-flash",
   sampling: { steps: 12, guidance: 1.5 },
   idempotencyKey: "restore-sample-001",
   onProgress: (progress) => console.log(progress.status)
@@ -139,9 +172,16 @@ const progress = await client.generations.getProgress({
   apiProjectId: "proj_123"
 });
 
-console.log(progress.status);
+console.log(progress.status, progress.stage);
+console.log(progress.queue?.message ?? "not queued");
+console.log(progress.stageProgress?.overallPercent);
 console.log(progress.transcription?.status ?? "not reported");
 ```
+
+`stage` names the one step the generation is in (`pending`, `preparing`, `transcribing`, `queued`,
+`starting`, `downloading`, `decoding`, `restoring`, `finalizing`, `uploading`, `complete`, or
+`failed`). While it waits for a processing worker, `queue` reports its position and why it waits;
+while a worker runs it, `stageProgress` reports percentages and byte counts when known.
 
 ## Generation download
 
@@ -157,6 +197,10 @@ const download = await client.generations.getDownload({
 
 console.log(download.downloadUrl);
 ```
+
+`downloadUrl` is a signed, time-limited media URL that needs no `Authorization` header. The
+response has `generationId`, `apiProjectId`, `downloadType`, `downloadUrl`, `fileName`,
+`storagePath`, and `mimeType`.
 
 Set `downloadType` to `"transcript"` to fetch the transcript JSON artifact when available.
 Pending transcripts raise `DiffioApiError` with `statusCode === 409` and error code
@@ -260,7 +304,7 @@ console.log(event.svixMessageId);
 Use the raw request body (not parsed JSON) plus the `svix-*` headers and your webhook signing secret.
 
 Verified events expose the same optional `event.transcription` object as generation progress.
-A Diffio 2.0 `generation.completed` event can report `pending` or `unavailable` transcription.
+A `generation.completed` event can report `pending` or `unavailable` transcription.
 Later transcript publication does not emit another completion event; poll progress when you need
 to follow a pending transcript. Older events can omit `transcription`.
 
@@ -303,4 +347,5 @@ Examples use ES modules. Save files with a `.mjs` extension or set `"type": "mod
 ```bash
 cd diffio-js
 npm run build
+npm test
 ```

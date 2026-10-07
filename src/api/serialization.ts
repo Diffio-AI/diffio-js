@@ -1,10 +1,14 @@
+import type { EdgeUploadSession } from "../core/edgeUpload";
 import type {
   AccountSettingsResponse,
   ApiKeyResponse,
   ApiKeysListResponse,
   AudioIsolationResult,
+  CompleteProjectUploadResponse,
   CreateGenerationResponse,
   CreateProjectResponse,
+  GenerationQueueStatus,
+  GenerationStageProgress,
   GenerationWebhookEvent,
   GenerationDownloadResponse,
   GenerationProgressResponse,
@@ -14,19 +18,41 @@ import type {
   ListProjectsResponse,
   ProjectGenerationSummary,
   ProjectSummary,
+  ProjectUploadSession,
   UsageSummaryResponse,
   WebhookConfigureResponse,
   WebhookTestEventResponse
 } from "./types";
 
-export function parseCreateProjectResponse(data: any): CreateProjectResponse {
+/** Builds the public createProject result; it omits the upload token, which can still overwrite the upload. */
+export function createProjectUploadResult(
+  data: any,
+  session: EdgeUploadSession,
+  uploadCompletion: CompleteProjectUploadResponse
+): CreateProjectResponse {
+  const upload: ProjectUploadSession = {
+    uploadSessionId: session.uploadSessionId,
+    edgeBaseUrl: session.edgeBaseUrl,
+    objectKey: session.objectKey,
+    partSizeBytes: session.partSizeBytes,
+    maxBytes: session.maxBytes,
+    expiresAt: session.expiresAt
+  };
   return {
     apiProjectId: data.apiProjectId,
-    uploadUrl: data.uploadUrl,
-    uploadMethod: data.uploadMethod || "PUT",
-    objectPath: data.objectPath,
-    bucket: data.bucket,
-    expiresAt: data.expiresAt
+    upload,
+    objectPath: data.objectPath ?? session.objectKey,
+    expiresAt: data.expiresAt ?? session.expiresAt,
+    uploadCompletion
+  };
+}
+
+export function parseCompleteProjectUploadResponse(data: any): CompleteProjectUploadResponse {
+  const sizeBytes = data?.sizeBytes;
+  return {
+    apiProjectId: data?.apiProjectId,
+    status: data?.status ?? "uploaded",
+    sizeBytes: typeof sizeBytes === "number" ? sizeBytes : null
   };
 }
 
@@ -95,6 +121,8 @@ export function parseGenerationProgressStage(data: any): GenerationProgressStage
 export function parseGenerationProgressResponse(data: any): GenerationProgressResponse {
   const restoredVideo = data?.restoredVideo;
   const transcription = parseGenerationTranscription(data?.transcription);
+  const stageProgress = parseGenerationStageProgress(data?.stageProgress);
+  const queue = parseGenerationQueueStatus(data?.queue);
   return {
     generationId: data.generationId,
     apiProjectId: data.apiProjectId,
@@ -103,6 +131,9 @@ export function parseGenerationProgressResponse(data: any): GenerationProgressRe
     preProcessing: parseGenerationProgressStage(data.preProcessing),
     inference: parseGenerationProgressStage(data.inference),
     restoredVideo: restoredVideo ? parseGenerationProgressStage(restoredVideo) : null,
+    ...(typeof data?.stage === "string" ? { stage: data.stage } : {}),
+    ...(stageProgress ? { stageProgress } : {}),
+    ...(queue ? { queue } : {}),
     ...(transcription ? { transcription } : {}),
     error: data.error ?? null,
     errorDetails: data.errorDetails ?? null
@@ -117,7 +148,6 @@ export function parseGenerationDownloadResponse(data: any): GenerationDownloadRe
     downloadUrl: data.downloadUrl,
     fileName: data.fileName,
     storagePath: data.storagePath,
-    bucket: data.bucket,
     mimeType: data.mimeType
   };
 }
@@ -190,6 +220,46 @@ export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
     ...(transcription ? { transcription } : {}),
     error: data.error ?? null,
     errorDetails: data.errorDetails ?? null
+  };
+}
+
+const optionalNumber = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+function parseGenerationStageProgress(data: unknown): GenerationStageProgress | undefined {
+  if (data == null || typeof data !== "object" || Array.isArray(data)) {
+    return undefined;
+  }
+  const source = data as Record<string, unknown>;
+  const progress: GenerationStageProgress = {};
+  for (const key of [
+    "overallPercent",
+    "stagePercent",
+    "bytesDone",
+    "bytesTotal",
+    "availableThroughSeconds",
+    "durationSeconds"
+  ] as const) {
+    const value = optionalNumber(source[key]);
+    if (value != null) {
+      progress[key] = value;
+    }
+  }
+  return progress;
+}
+
+function parseGenerationQueueStatus(data: unknown): GenerationQueueStatus | undefined {
+  if (data == null || typeof data !== "object" || Array.isArray(data)) {
+    return undefined;
+  }
+  const source = data as Record<string, unknown>;
+  return {
+    position: optionalNumber(source.position),
+    connectedWorkers: optionalNumber(source.connectedWorkers),
+    idleWorkers: optionalNumber(source.idleWorkers),
+    busyWorkers: optionalNumber(source.busyWorkers),
+    waitReason: typeof source.waitReason === "string" ? source.waitReason : null,
+    message: typeof source.message === "string" ? source.message : ""
   };
 }
 

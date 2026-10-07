@@ -4,14 +4,21 @@ import { mergeHeaders, mergeOnlyDefinedHeaders, resolveHeaders } from "./core/he
 import { Supplier } from "./core/supplier";
 import { join } from "./core/url";
 import { requestWithRetries } from "./core/retry";
-import { DiffioApiError, DiffioTimeoutError } from "./errors";
+import { DiffioApiError, DiffioTimeoutError, DiffioUploadError } from "./errors";
+import {
+  parseEdgeUploadSession,
+  uploadProjectMediaToEdge,
+  type EdgeUploadHttpRequest,
+  type EdgeUploadHttpResponse
+} from "./core/edgeUpload";
 import {
   createAudioIsolationResult,
   parseAccountSettingsResponse,
   parseApiKeyResponse,
   parseApiKeysListResponse,
+  createProjectUploadResult,
+  parseCompleteProjectUploadResponse,
   parseCreateGenerationResponse,
-  parseCreateProjectResponse,
   parseGenerationDownloadResponse,
   parseGenerationProgressResponse,
   parseListProjectGenerationsResponse,
@@ -25,6 +32,7 @@ import type {
   ApiKeyResponse,
   ApiKeysListResponse,
   AudioIsolationResult,
+  CompleteProjectUploadResponse,
   CreateGenerationResponse,
   CreateProjectResponse,
   GenerationDownloadResponse,
@@ -50,17 +58,23 @@ import { lookup as lookupMimeType } from "mime-types";
 
 const DEFAULT_BASE_URL = "https://api.diffio.ai";
 const API_PREFIX = "v1";
+/** Generation endpoint for each supported model, as api/model_registry.json in diffio-ui lists them. */
 const MODEL_ENDPOINTS = {
-  "diffio-2": "diffio-2.0-generation",
-  "diffio-2-flash": "diffio-2.0-flash-generation",
-  "diffio-3.4": "diffio-3.4-generation",
-  "diffio-3.5": "diffio-3.5-generation",
-  "diffio-4.0-flash": "diffio-4.0-flash-generation",
-  "diffio-4.0-pro": "diffio-4.0-pro-generation"
+  "diffio-4.5-flash": "diffio-4.5-flash-generation",
+  "diffio-4.5-pro": "diffio-4.5-pro-generation"
 } as const satisfies Record<ModelKey, string>;
+/** The registry's `freeDefault` model; Pro is paid-only, so it cannot be the default for every key. */
+const DEFAULT_MODEL_KEY: ModelKey = "diffio-4.5-flash";
+const SUPPORTED_MODEL_KEYS = Object.keys(MODEL_ENDPOINTS) as ModelKey[];
+/** Per-request timeout for one edge upload call; a 32 MiB part needs about 1 Mbit/s to finish in time. */
+const DEFAULT_EDGE_UPLOAD_TIMEOUT_SECONDS = 300;
+/** complete_project_upload is idempotent, so it is retried even when the client disables retries by default. */
+const DEFAULT_COMPLETE_UPLOAD_MAX_RETRIES = 3;
 const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
 const DEFAULT_RETRY_BACKOFF = 0.5;
 const DEFAULT_TIMEOUT_SECONDS = 60;
+/** How long waitForGeneration polls by default; fleet generations can queue and run for minutes (matches the Python SDK). */
+const DEFAULT_GENERATION_WAIT_TIMEOUT_SECONDS = 600;
 const WEBHOOK_EVENT_TYPES = [
   "generation.queued",
   "generation.processing",
@@ -141,49 +155,92 @@ export class DiffioClient {
     }
 
     const response = await this._requestJson("POST", "create_project", payload, requestOptions);
-    const project = parseCreateProjectResponse(response);
-    await this._uploadFile({
-      uploadUrl: project.uploadUrl,
-      uploadMethod: project.uploadMethod,
-      filePath,
-      contentType: resolvedContentType,
-      requestOptions
-    });
-    return project;
+    const apiProjectId = typeof response?.apiProjectId === "string" ? response.apiProjectId : undefined;
+    const session = parseEdgeUploadSession(response?.upload);
+    if (!apiProjectId || !session) {
+      throw new DiffioUploadError(
+        "upload/invalid-response",
+        "create_project did not return an upload session (apiProjectId and upload are required).",
+        { responseBody: response, apiProjectId }
+      );
+    }
+
+    try {
+      const sizeBytes = getFileSize(filePath);
+      const fileHandle = await openFileForReading(filePath);
+      try {
+        await uploadProjectMediaToEdge({
+          session,
+          sizeBytes,
+          readPartBytes: (startByte, endByte) => readFileBytes(fileHandle, startByte, endByte),
+          sendEdgeRequest: (request) => this._sendEdgeUploadRequest(request, requestOptions)
+        });
+      } finally {
+        await fileHandle.close();
+      }
+    } catch (error) {
+      if (error instanceof DiffioUploadError) {
+        error.apiProjectId = error.apiProjectId ?? apiProjectId;
+      }
+      throw error;
+    }
+
+    const uploadCompletion = await this.completeProjectUpload({ apiProjectId, requestOptions });
+    return createProjectUploadResult(response, session, uploadCompletion);
   }
 
-  private async _uploadFile(options: {
-    uploadUrl: string;
-    uploadMethod?: string;
-    filePath?: string;
-    data?: unknown;
-    contentType?: string;
+  /**
+   * Confirms that a project's edge upload landed and starts preprocessing. createProject calls it;
+   * call it yourself only to finish an upload whose confirmation failed. It is idempotent.
+   */
+  async completeProjectUpload(options: {
+    apiProjectId: string;
     requestOptions?: DiffioClient.RequestOptions;
-  }): Promise<void> {
-    const { uploadUrl, uploadMethod, filePath, data, contentType, requestOptions } = options;
-    if ((filePath == null) === (data == null)) {
-      throw new DiffioApiError("Provide filePath or data");
+  }): Promise<CompleteProjectUploadResponse> {
+    const { apiProjectId, requestOptions } = options;
+    if (!apiProjectId) {
+      throw new DiffioApiError("apiProjectId is required");
     }
-
-    let resolvedContentType = contentType;
-    if (!resolvedContentType && filePath) {
-      const guessed = lookupMimeType(filePath);
-      resolvedContentType = typeof guessed === "string" ? guessed : undefined;
-    }
-    if (!resolvedContentType) {
-      resolvedContentType = "application/octet-stream";
-    }
-
-    const method = (uploadMethod || "PUT").toUpperCase();
-    const extraHeaders: Record<string, string> = {
-      "Content-Type": resolvedContentType
+    const completeRequestOptions: DiffioClient.RequestOptions = {
+      ...requestOptions,
+      maxRetries: requestOptions?.maxRetries ?? this._options.maxRetries ?? DEFAULT_COMPLETE_UPLOAD_MAX_RETRIES
     };
-    if (isStorageEmulatorUrl(uploadUrl)) {
-      extraHeaders.Authorization = "Bearer owner";
-    }
+    const response = await this._requestJson(
+      "POST",
+      "complete_project_upload",
+      { apiProjectId },
+      completeRequestOptions
+    );
+    return parseCompleteProjectUploadResponse(response);
+  }
 
-    const bodyFactory = filePath ? () => createFileReadStream(filePath) : () => data;
-    await this._requestBinary(method, uploadUrl, bodyFactory, requestOptions, extraHeaders, true);
+  /** Sends one edge upload call with the session's upload token; never the API key or SDK default headers. */
+  private async _sendEdgeUploadRequest(
+    request: EdgeUploadHttpRequest,
+    requestOptions?: DiffioClient.RequestOptions
+  ): Promise<EdgeUploadHttpResponse> {
+    const fetchFn = this._options.fetch ?? globalThis.fetch;
+    if (!fetchFn) {
+      throw new DiffioApiError("fetch is not available in this runtime");
+    }
+    const timeoutSeconds =
+      requestOptions?.timeoutInSeconds ?? requestOptions?.timeout ?? DEFAULT_EDGE_UPLOAD_TIMEOUT_SECONDS;
+    // A Uint8Array or string body has a known length, so fetch sends the Content-Length the edge requires.
+    const response = await fetchWithTimeout(
+      fetchFn,
+      request.url,
+      {
+        method: request.method,
+        headers: {
+          Authorization: `Bearer ${request.bearerToken}`,
+          "Content-Type": request.contentType
+        },
+        body: request.body as BodyInit
+      },
+      timeoutSeconds * 1000,
+      requestOptions?.abortSignal
+    );
+    return { status: response.status, bodyText: await response.text() };
   }
 
   /** Retries generation admission only when the caller supplies a nonblank idempotency key. */
@@ -195,10 +252,10 @@ export class DiffioClient {
     idempotencyKey?: string;
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<CreateGenerationResponse> {
-    const { apiProjectId, model = "diffio-4.0-flash", sampling, params, idempotencyKey, requestOptions } = options;
-    const endpoint = MODEL_ENDPOINTS[model];
+    const { apiProjectId, model = DEFAULT_MODEL_KEY, sampling, params, idempotencyKey, requestOptions } = options;
+    const endpoint = Object.prototype.hasOwnProperty.call(MODEL_ENDPOINTS, model) ? MODEL_ENDPOINTS[model] : undefined;
     if (!endpoint) {
-      throw new DiffioApiError(`Unsupported model: ${model}`);
+      throw new DiffioApiError(`Unsupported model: ${model}. Use ${SUPPORTED_MODEL_KEYS.join(" or ")}.`);
     }
 
     const payload: Record<string, unknown> = { apiProjectId };
@@ -255,7 +312,7 @@ export class DiffioClient {
     return parseGenerationProgressResponse(response);
   }
 
-  /** Waits for media completion and settlement. Diffio 2.0 transcription may still be pending or unavailable. */
+  /** Waits for media completion and settlement; transcription may still be pending or unavailable. */
   async waitForGeneration(options: {
     generationId: string;
     apiProjectId?: string;
@@ -276,7 +333,7 @@ export class DiffioClient {
       showProgress,
       requestOptions
     } = options;
-    const timeoutSeconds = timeoutInSeconds ?? timeout ?? DEFAULT_TIMEOUT_SECONDS;
+    const timeoutSeconds = timeoutInSeconds ?? timeout ?? DEFAULT_GENERATION_WAIT_TIMEOUT_SECONDS;
     const deadline = Date.now() + timeoutSeconds * 1000;
     let lastProgress: GenerationProgressResponse | null = null;
 
@@ -644,18 +701,8 @@ export class DiffioClient {
     downloadUrl: string,
     requestOptions?: DiffioClient.RequestOptions
   ): Promise<Uint8Array> {
-    const extraHeaders: Record<string, string> = {};
-    if (isStorageEmulatorUrl(downloadUrl)) {
-      extraHeaders.Authorization = "Bearer owner";
-    }
-    const response = await this._requestBinary(
-      "GET",
-      downloadUrl,
-      () => undefined,
-      requestOptions,
-      extraHeaders,
-      true
-    );
+    // The download URL is a signed edge media URL; it needs no Authorization header.
+    const response = await this._requestBinary("GET", downloadUrl, () => undefined, requestOptions, {}, true);
     return response as Uint8Array;
   }
 
@@ -908,9 +955,12 @@ async function parseErrorResponse(response: Response): Promise<any> {
 
 function getErrorMessage(body: any, status: number): string {
   if (body && typeof body === "object" && "error" in body) {
-    const message = (body as { error?: unknown }).error;
-    if (message) {
-      return String(message);
+    const error = (body as { error?: unknown }).error;
+    if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
+      return (error as { message: string }).message;
+    }
+    if (error) {
+      return String(error);
     }
   }
   return `Request failed with status ${status}`;
@@ -932,39 +982,6 @@ function guessContentType(filePath: string): string | undefined {
   return undefined;
 }
 
-function isStorageEmulatorUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    const port = parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80;
-    if (["127.0.0.1", "localhost", "0.0.0.0", "::1"].includes(host)) {
-      if (!parsed.port || port === 9199) {
-        return true;
-      }
-    }
-
-    const envHost =
-      typeof process !== "undefined"
-        ? process.env.STORAGE_EMULATOR_HOST || process.env.FIREBASE_STORAGE_EMULATOR_HOST
-        : undefined;
-    if (!envHost) {
-      return false;
-    }
-    const normalized = envHost.startsWith("http://") || envHost.startsWith("https://") ? envHost : `http://${envHost}`;
-    const emulatorParsed = new URL(normalized);
-    const emulatorHost = emulatorParsed.hostname.toLowerCase();
-    const emulatorPort = emulatorParsed.port
-      ? Number(emulatorParsed.port)
-      : emulatorParsed.protocol === "https:"
-        ? 443
-        : 80;
-
-    return host === emulatorHost && port === emulatorPort;
-  } catch {
-    return false;
-  }
-}
-
 function isNodeReadable(value: unknown): value is NodeJS.ReadableStream {
   return Boolean(value) && typeof value === "object" && typeof (value as NodeJS.ReadableStream).pipe === "function";
 }
@@ -978,14 +995,26 @@ function destroyNodeReadable(value: unknown): void {
   }
 }
 
-async function createFileReadStream(filePath: string): Promise<NodeJS.ReadableStream> {
-  const fs = await import("node:fs");
-  const stream = fs.createReadStream(filePath);
-  await new Promise<void>((resolve, reject) => {
-    stream.once("open", () => resolve());
-    stream.once("error", reject);
-  });
-  return stream;
+type MediaFileHandle = import("node:fs/promises").FileHandle;
+
+async function openFileForReading(filePath: string): Promise<MediaFileHandle> {
+  const fs = await import("node:fs/promises");
+  return fs.open(filePath, "r");
+}
+
+/** Reads bytes [startByte, endByte) of an open file into one buffer, looping over short reads. */
+async function readFileBytes(fileHandle: MediaFileHandle, startByte: number, endByte: number): Promise<Uint8Array> {
+  const length = endByte - startByte;
+  const buffer = Buffer.alloc(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await fileHandle.read(buffer, offset, length - offset, startByte + offset);
+    if (bytesRead === 0) {
+      throw new DiffioUploadError("upload/invalid-response", "The file became shorter while it was uploading.");
+    }
+    offset += bytesRead;
+  }
+  return buffer;
 }
 
 function getFileSize(filePath: string): number {

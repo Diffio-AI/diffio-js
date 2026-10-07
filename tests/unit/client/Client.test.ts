@@ -31,19 +31,22 @@ describe("DiffioClient", () => {
     ).rejects.toThrow(DiffioApiError);
   });
 
-  test("createGeneration rejects the retired diffio-3 model", async () => {
-    const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
-    await expect(
-      client.createGeneration({ apiProjectId: "proj", model: "diffio-3" as never })
-    ).rejects.toThrow("Unsupported model: diffio-3");
-  });
+  test.each(["diffio-2", "diffio-2-flash", "diffio-3.2", "diffio-4.0-flash"])(
+    "createGeneration refuses the removed %s model and names the supported ones",
+    async (model) => {
+      const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
+      await expect(
+        client.createGeneration({ apiProjectId: "proj", model: model as never })
+      ).rejects.toThrow(`Unsupported model: ${model}. Use diffio-4.5-flash or diffio-4.5-pro.`);
+    }
+  );
 
   test("createAndWait forwards idempotencyKey to generation creation", async () => {
     const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
     const generation = {
       generationId: "gen_1",
       apiProjectId: "proj_1",
-      modelKey: "diffio-3.5",
+      modelKey: "diffio-4.5-pro",
       status: "queued",
       idempotentReplay: true
     };
@@ -60,7 +63,7 @@ describe("DiffioClient", () => {
 
     const result = await client.generations.createAndWait({
       apiProjectId: "proj_1",
-      model: "diffio-3.5",
+      model: "diffio-4.5-pro",
       idempotencyKey: "restore-proj-1"
     });
 
@@ -74,22 +77,28 @@ describe("DiffioClient", () => {
     const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
     jest.spyOn(client, "createProject").mockResolvedValue({
       apiProjectId: "proj_1",
-      uploadUrl: "http://upload.example.com/file",
-      uploadMethod: "PUT",
-      objectPath: "uploads/sample.wav",
-      bucket: "diffio",
-      expiresAt: "2026-01-01T00:00:00Z"
+      upload: {
+        uploadSessionId: "api-proj_1",
+        edgeBaseUrl: "https://media.example.com",
+        objectKey: "api/users/user_1/projects/proj_1/original/sample.wav",
+        partSizeBytes: 33554432,
+        maxBytes: 2147483648,
+        expiresAt: "2026-01-01T00:00:00Z"
+      },
+      objectPath: "api/users/user_1/projects/proj_1/original/sample.wav",
+      expiresAt: "2026-01-01T00:00:00Z",
+      uploadCompletion: { apiProjectId: "proj_1", status: "uploaded", sizeBytes: 1024 }
     });
     const generationSpy = jest.spyOn(client, "createGeneration").mockResolvedValue({
       generationId: "gen_1",
       apiProjectId: "proj_1",
-      modelKey: "diffio-3.5",
+      modelKey: "diffio-4.5-pro",
       status: "queued"
     });
 
     await client.audioIsolation.isolate({
       filePath: "sample.wav",
-      model: "diffio-3.5",
+      model: "diffio-4.5-pro",
       idempotencyKey: "restore-proj-1"
     });
 

@@ -14,16 +14,22 @@ const completedProgress: GenerationProgressResponse = {
 const isolation: AudioIsolationResult = {
   project: {
     apiProjectId: completedProgress.apiProjectId,
-    uploadUrl: "https://upload.example.com/sample.wav",
-    uploadMethod: "PUT",
-    objectPath: "uploads/sample.wav",
-    bucket: "diffio",
-    expiresAt: "2026-01-01T00:00:00Z"
+    upload: {
+      uploadSessionId: `api-${completedProgress.apiProjectId}`,
+      edgeBaseUrl: "https://media.example.com",
+      objectKey: "api/users/user_1/projects/proj_transcription/original/sample.wav",
+      partSizeBytes: 33554432,
+      maxBytes: 2147483648,
+      expiresAt: "2026-01-01T00:00:00Z"
+    },
+    objectPath: "api/users/user_1/projects/proj_transcription/original/sample.wav",
+    expiresAt: "2026-01-01T00:00:00Z",
+    uploadCompletion: { apiProjectId: completedProgress.apiProjectId, status: "uploaded", sizeBytes: 1024 }
   },
   generation: {
     generationId: completedProgress.generationId,
     apiProjectId: completedProgress.apiProjectId,
-    modelKey: "diffio-2",
+    modelKey: "diffio-4.5-flash",
     status: "queued"
   }
 };
@@ -75,7 +81,6 @@ describe("independent transcription", () => {
           downloadUrl: "https://download.example.com/restored.mp3",
           fileName: "restored.mp3",
           storagePath: "outputs/restored.mp3",
-          bucket: "diffio",
           mimeType: "audio/mpeg"
         })))
         .mockResolvedValueOnce(new Response(audioBytes));

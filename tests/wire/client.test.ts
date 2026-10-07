@@ -1,138 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync, type ReadStream } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DiffioClient } from "../../src/Client";
-import { DIFFIO_SDK_VERSION } from "../../src/version";
 import { mockServerPool } from "../mock-server/MockServerPool";
 
 describe("DiffioClient wire", () => {
-  test("createProject sends payload and returns response", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "diffio-sdk-"));
-    const filePath = join(dir, "demo.txt");
-    const fileContents = "hello world";
-    writeFileSync(filePath, fileContents);
-
-    const server = mockServerPool.createServer();
-    const uploadServer = mockServerPool.createServer({ baseUrl: "http://upload.local" });
-    const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
-
-    try {
-      server
-        .mockEndpoint()
-        .post("/v1/create_project")
-        .headers({
-          Authorization: "Bearer test",
-          "Content-Type": "application/json",
-          "X-Diffio-SDK-Language": "JavaScript",
-          "X-Diffio-SDK-Name": "diffio",
-          "X-Diffio-SDK-Version": DIFFIO_SDK_VERSION
-        })
-        .jsonBody({
-          fileName: "demo.txt",
-          contentType: "text/plain",
-          contentLength: Buffer.byteLength(fileContents)
-        })
-        .respondWith()
-        .statusCode(200)
-        .jsonBody({
-          apiProjectId: "proj_123",
-          uploadUrl: "http://upload.local/file",
-          uploadMethod: "PUT",
-          objectPath: "uploads/demo.txt",
-          bucket: "diffio",
-          expiresAt: "2024-01-01T00:00:00Z"
-        })
-        .build();
-
-      uploadServer
-        .mockEndpoint()
-        .put("/file")
-        .headers({
-          "Content-Type": "text/plain"
-        })
-        .respondWith()
-        .statusCode(200)
-        .jsonBody({})
-        .build();
-
-      const response = await client.createProject({ filePath });
-      expect(response).toEqual({
-        apiProjectId: "proj_123",
-        uploadUrl: "http://upload.local/file",
-        uploadMethod: "PUT",
-        objectPath: "uploads/demo.txt",
-        bucket: "diffio",
-        expiresAt: "2024-01-01T00:00:00Z"
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("createProject opens a fresh file stream when an upload is retried", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "diffio-sdk-retry-"));
-    const filePath = join(dir, "retry.bin");
-    const fileContents = Buffer.from("retry uploads must preserve every byte\n", "utf8");
-    writeFileSync(filePath, fileContents);
-
-    const uploadBodies: Buffer[] = [];
-    const uploadStreams: ReadStream[] = [];
-    const fetchMock: typeof fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/v1/create_project")) {
-        return new Response(
-          JSON.stringify({
-            apiProjectId: "proj_retry",
-            uploadUrl: "https://upload.example/retry.bin",
-            uploadMethod: "PUT",
-            objectPath: "uploads/retry.bin",
-            bucket: "diffio",
-            expiresAt: "2024-01-01T00:00:00Z"
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
-      }
-
-      const stream = init?.body as unknown as ReadStream;
-      const chunks: Buffer[] = [];
-      uploadStreams.push(stream);
-      for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      uploadBodies.push(Buffer.concat(chunks));
-
-      return new Response(JSON.stringify({}), {
-        status: uploadBodies.length === 1 ? 503 : 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    });
-    const client = new DiffioClient({
-      apiKey: "test",
-      baseUrl: "https://api.example",
-      fetch: fetchMock,
-      maxRetries: 1,
-      retryBackoff: 0
-    });
-
-    try {
-      await client.createProject({ filePath });
-
-      expect(uploadBodies).toEqual([fileContents, fileContents]);
-      expect(uploadStreams).toHaveLength(2);
-      expect(uploadStreams[1]).not.toBe(uploadStreams[0]);
-      expect(uploadStreams.every((stream) => stream.closed && stream.destroyed)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   test("createGeneration routes to model endpoint", async () => {
     const server = mockServerPool.createServer();
     const client = new DiffioClient({ apiKey: "test", baseUrl: server.baseUrl, maxRetries: 0 });
 
     server
       .mockEndpoint()
-      .post("/v1/diffio-2.0-generation")
+      .post("/v1/diffio-4.5-pro-generation")
       .headers({
         Authorization: "Bearer test",
         "Content-Type": "application/json"
@@ -143,16 +19,16 @@ describe("DiffioClient wire", () => {
       .jsonBody({
         generationId: "gen_1",
         apiProjectId: "proj_123",
-        modelKey: "diffio-2",
+        modelKey: "diffio-4.5-pro",
         status: "queued"
       })
       .build();
 
-    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-2" });
+    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-4.5-pro" });
     expect(response).toEqual({
       generationId: "gen_1",
       apiProjectId: "proj_123",
-      modelKey: "diffio-2",
+      modelKey: "diffio-4.5-pro",
       status: "queued"
     });
     expect("idempotentReplay" in response).toBe(false);
@@ -164,7 +40,7 @@ describe("DiffioClient wire", () => {
 
     server
       .mockEndpoint()
-      .post("/v1/diffio-3.5-generation")
+      .post("/v1/diffio-4.5-flash-generation")
       .headers({
         Authorization: "Bearer test",
         "Content-Type": "application/json"
@@ -178,7 +54,7 @@ describe("DiffioClient wire", () => {
       .jsonBody({
         generationId: "gen_35",
         apiProjectId: "proj_123",
-        modelKey: "diffio-3.5",
+        modelKey: "diffio-4.5-flash",
         status: "queued",
         idempotentReplay: true
       })
@@ -186,13 +62,13 @@ describe("DiffioClient wire", () => {
 
     const response = await client.generations.create({
       apiProjectId: "proj_123",
-      model: "diffio-3.5",
+      model: "diffio-4.5-flash",
       idempotencyKey: "restore-proj-123"
     });
     expect(response).toEqual({
       generationId: "gen_35",
       apiProjectId: "proj_123",
-      modelKey: "diffio-3.5",
+      modelKey: "diffio-4.5-flash",
       status: "queued",
       idempotentReplay: true
     });
@@ -220,10 +96,9 @@ describe("DiffioClient wire", () => {
         generationId: "gen_1",
         apiProjectId: "proj_1",
         downloadType: "transcript",
-        downloadUrl: "https://download.test/word_timestamps.json",
+        downloadUrl: "https://media.example.com/m/media-token/generations/gen_1/word_timestamps.json?download=word_timestamps.json",
         fileName: "word_timestamps.json",
         storagePath: "users/u/projects/proj_1/generations/gen_1/word_timestamps.json",
-        bucket: "diffio_api",
         mimeType: "application/json"
       })
       .build();
