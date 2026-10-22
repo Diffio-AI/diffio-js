@@ -8,7 +8,7 @@ describe("DiffioClient wire", () => {
 
     server
       .mockEndpoint()
-      .post("/v1/diffio-4.5-pro-generation")
+      .post("/v1/diffio-4.6-pro-generation")
       .headers({
         Authorization: "Bearer test",
         "Content-Type": "application/json"
@@ -19,16 +19,16 @@ describe("DiffioClient wire", () => {
       .jsonBody({
         generationId: "gen_1",
         apiProjectId: "proj_123",
-        modelKey: "diffio-4.5-pro",
+        modelKey: "diffio-4.6-pro",
         status: "queued"
       })
       .build();
 
-    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-4.5-pro" });
+    const response = await client.createGeneration({ apiProjectId: "proj_123", model: "diffio-4.6-pro" });
     expect(response).toEqual({
       generationId: "gen_1",
       apiProjectId: "proj_123",
-      modelKey: "diffio-4.5-pro",
+      modelKey: "diffio-4.6-pro",
       status: "queued"
     });
     expect("idempotentReplay" in response).toBe(false);
@@ -40,7 +40,7 @@ describe("DiffioClient wire", () => {
 
     server
       .mockEndpoint()
-      .post("/v1/diffio-4.5-flash-generation")
+      .post("/v1/diffio-4.6-flash-generation")
       .headers({
         Authorization: "Bearer test",
         "Content-Type": "application/json"
@@ -54,7 +54,7 @@ describe("DiffioClient wire", () => {
       .jsonBody({
         generationId: "gen_35",
         apiProjectId: "proj_123",
-        modelKey: "diffio-4.5-flash",
+        modelKey: "diffio-4.6-flash",
         status: "queued",
         idempotentReplay: true
       })
@@ -62,13 +62,13 @@ describe("DiffioClient wire", () => {
 
     const response = await client.generations.create({
       apiProjectId: "proj_123",
-      model: "diffio-4.5-flash",
+      model: "diffio-4.6-flash",
       idempotencyKey: "restore-proj-123"
     });
     expect(response).toEqual({
       generationId: "gen_35",
       apiProjectId: "proj_123",
-      modelKey: "diffio-4.5-flash",
+      modelKey: "diffio-4.6-flash",
       status: "queued",
       idempotentReplay: true
     });

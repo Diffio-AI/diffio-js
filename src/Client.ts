@@ -60,12 +60,24 @@ const DEFAULT_BASE_URL = "https://api.diffio.ai";
 const API_PREFIX = "v1";
 /** Generation endpoint for each supported model, as api/model_registry.json in diffio-ui lists them. */
 const MODEL_ENDPOINTS = {
-  "diffio-4.5-flash": "diffio-4.5-flash-generation",
-  "diffio-4.5-pro": "diffio-4.5-pro-generation"
+  "diffio-4.6-flash": "diffio-4.6-flash-generation",
+  "diffio-4.6-pro": "diffio-4.6-pro-generation"
 } as const satisfies Record<ModelKey, string>;
+/** Keys accepted from code written against 0.2.x; they run the matching 4.6 model. Not part of ModelKey. */
+const LEGACY_MODEL_KEYS: Readonly<Record<string, ModelKey>> = {
+  "diffio-4.5-flash": "diffio-4.6-flash",
+  "diffio-4.5-pro": "diffio-4.6-pro"
+};
 /** The registry's `freeDefault` model; Pro is paid-only, so it cannot be the default for every key. */
-const DEFAULT_MODEL_KEY: ModelKey = "diffio-4.5-flash";
+const DEFAULT_MODEL_KEY: ModelKey = "diffio-4.6-flash";
 const SUPPORTED_MODEL_KEYS = Object.keys(MODEL_ENDPOINTS) as ModelKey[];
+const hasOwn = (record: object, key: string): boolean => Object.prototype.hasOwnProperty.call(record, key);
+
+/** Returns the generation endpoint for a model key, or undefined when the SDK does not support it. */
+function generationEndpointForModel(model: string): string | undefined {
+  const modelKey = hasOwn(LEGACY_MODEL_KEYS, model) ? LEGACY_MODEL_KEYS[model] : model;
+  return hasOwn(MODEL_ENDPOINTS, modelKey) ? MODEL_ENDPOINTS[modelKey as ModelKey] : undefined;
+}
 /** Per-request timeout for one edge upload call; a 32 MiB part needs about 1 Mbit/s to finish in time. */
 const DEFAULT_EDGE_UPLOAD_TIMEOUT_SECONDS = 300;
 /** complete_project_upload is idempotent, so it is retried even when the client disables retries by default. */
@@ -253,7 +265,7 @@ export class DiffioClient {
     requestOptions?: DiffioClient.RequestOptions;
   }): Promise<CreateGenerationResponse> {
     const { apiProjectId, model = DEFAULT_MODEL_KEY, sampling, params, idempotencyKey, requestOptions } = options;
-    const endpoint = Object.prototype.hasOwnProperty.call(MODEL_ENDPOINTS, model) ? MODEL_ENDPOINTS[model] : undefined;
+    const endpoint = generationEndpointForModel(model);
     if (!endpoint) {
       throw new DiffioApiError(`Unsupported model: ${model}. Use ${SUPPORTED_MODEL_KEYS.join(" or ")}.`);
     }

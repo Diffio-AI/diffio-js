@@ -37,7 +37,7 @@ describe("DiffioClient", () => {
       const client = new DiffioClient({ apiKey: "test", baseUrl: "http://example.com" });
       await expect(
         client.createGeneration({ apiProjectId: "proj", model: model as never })
-      ).rejects.toThrow(`Unsupported model: ${model}. Use diffio-4.5-flash or diffio-4.5-pro.`);
+      ).rejects.toThrow(`Unsupported model: ${model}. Use diffio-4.6-flash or diffio-4.6-pro.`);
     }
   );
 
@@ -46,7 +46,7 @@ describe("DiffioClient", () => {
     const generation = {
       generationId: "gen_1",
       apiProjectId: "proj_1",
-      modelKey: "diffio-4.5-pro",
+      modelKey: "diffio-4.6-pro",
       status: "queued",
       idempotentReplay: true
     };
@@ -63,7 +63,7 @@ describe("DiffioClient", () => {
 
     const result = await client.generations.createAndWait({
       apiProjectId: "proj_1",
-      model: "diffio-4.5-pro",
+      model: "diffio-4.6-pro",
       idempotencyKey: "restore-proj-1"
     });
 
@@ -92,13 +92,13 @@ describe("DiffioClient", () => {
     const generationSpy = jest.spyOn(client, "createGeneration").mockResolvedValue({
       generationId: "gen_1",
       apiProjectId: "proj_1",
-      modelKey: "diffio-4.5-pro",
+      modelKey: "diffio-4.6-pro",
       status: "queued"
     });
 
     await client.audioIsolation.isolate({
       filePath: "sample.wav",
-      model: "diffio-4.5-pro",
+      model: "diffio-4.6-pro",
       idempotencyKey: "restore-proj-1"
     });
 
