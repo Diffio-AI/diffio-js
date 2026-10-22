@@ -29,7 +29,7 @@ const isolation: AudioIsolationResult = {
   generation: {
     generationId: completedProgress.generationId,
     apiProjectId: completedProgress.apiProjectId,
-    modelKey: "diffio-4.5-flash",
+    modelKey: "diffio-4.6-flash",
     status: "queued"
   }
 };

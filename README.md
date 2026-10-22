@@ -1,6 +1,6 @@
 # Diffio JS SDK
 
-The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, edge upload, Diffio 4.5 generations, progress checks, and download URLs.
+The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, edge upload, Diffio 4.6 generations, progress checks, and download URLs.
 
 ## Install
 
@@ -46,10 +46,10 @@ const projects = await client.listProjects({
 
 | Model | `model` value | Endpoint | Notes |
 |---|---|---|---|
-| Diffio 4.5 Flash | `diffio-4.5-flash` | `/v1/diffio-4.5-flash-generation` | Default. Fast, high quality speech restoration. |
-| Diffio 4.5 Pro | `diffio-4.5-pro` | `/v1/diffio-4.5-pro-generation` | Best quality. Paid accounts only. |
+| Diffio 4.6 Flash | `diffio-4.6-flash` | `/v1/diffio-4.6-flash-generation` | Default. Fast, high quality speech restoration. |
+| Diffio 4.6 Pro | `diffio-4.6-pro` | `/v1/diffio-4.6-pro-generation` | Best quality. Paid accounts only. |
 
-Omitting `model` uses `diffio-4.5-flash`. Earlier models (`diffio-2`, `diffio-2-flash`, `diffio-3.2`,
+Omitting `model` uses `diffio-4.6-flash`. Earlier models (`diffio-2`, `diffio-2-flash`, `diffio-3.2`,
 `diffio-3.4`, `diffio-3.5`, `diffio-4.0-flash`, `diffio-4.0-pro`) are retired: the SDK refuses them
 before sending a request, and the API answers their endpoints with HTTP 410 `model_retired`.
 Generations created before a model was retired keep their original `modelKey`, so response
@@ -83,7 +83,7 @@ const project = await client.createProject({
 
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
-  model: "diffio-4.5-flash",
+  model: "diffio-4.6-flash",
   idempotencyKey: "restore-sample-001"
 });
 
@@ -110,7 +110,7 @@ retrying after an uncertain response.
 `waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
 `complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
 or usage settlement is still pending. They poll for up to 600 seconds unless you pass `timeout`
-or `timeoutInSeconds`. `complete` means restored media is ready. Diffio 4.5 transcribes the recording before
+or `timeoutInSeconds`. `complete` means restored media is ready. Diffio 4.6 transcribes the recording before
 restoration starts, so a completed generation has its transcript unless transcription finished as
 `unavailable`; while a generation runs, transcription can be `pending`, `available`, or `unavailable`. Read
 `progress.transcription?.status` independently. Older responses omit `transcription`; absence does
@@ -124,7 +124,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
-  model: "diffio-4.5-flash",
+  model: "diffio-4.6-flash",
   idempotencyKey: "restore-sample-001"
 });
 
@@ -145,7 +145,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
-  model: "diffio-4.5-flash",
+  model: "diffio-4.6-flash",
   idempotencyKey: "restore-sample-001",
   onProgress: (progress) => console.log(progress.status)
 });
@@ -334,6 +334,11 @@ app.post("/webhooks/diffio", express.raw({ type: "application/json" }), (req, re
   }
 });
 ```
+
+## Upgrading to 0.3.0
+
+0.3.0 adds Diffio 4.6 Flash (`diffio-4.6-flash`) and Diffio 4.6 Pro (`diffio-4.6-pro`), and the
+default model is now `diffio-4.6-flash`. Request and response shapes are unchanged.
 
 ## Runtime compatibility
 

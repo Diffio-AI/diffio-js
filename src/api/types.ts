@@ -1,5 +1,5 @@
 /** Models new generations can use (api/model_registry.json in diffio-ui); each has its own endpoint. */
-export type ModelKey = "diffio-4.5-flash" | "diffio-4.5-pro";
+export type ModelKey = "diffio-4.6-flash" | "diffio-4.6-pro";
 export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =

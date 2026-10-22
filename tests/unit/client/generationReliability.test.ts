@@ -5,7 +5,7 @@ describe("generation reliability", () => {
   const generationResponse = {
     generationId: "gen_123",
     apiProjectId: "proj_123",
-    modelKey: "diffio-4.5-flash",
+    modelKey: "diffio-4.6-flash",
     status: "queued"
   };
 
