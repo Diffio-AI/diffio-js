@@ -14,6 +14,7 @@ import type {
   GenerationProgressResponse,
   GenerationProgressStage,
   GenerationTranscription,
+  GenerationWarning,
   ListProjectGenerationsResponse,
   ListProjectsResponse,
   ProjectGenerationSummary,
@@ -135,8 +136,10 @@ export function parseGenerationProgressResponse(data: any): GenerationProgressRe
     ...(stageProgress ? { stageProgress } : {}),
     ...(queue ? { queue } : {}),
     ...(transcription ? { transcription } : {}),
+    warnings: parseGenerationWarnings(data?.warnings),
     error: data.error ?? null,
-    errorDetails: data.errorDetails ?? null
+    errorDetails: data.errorDetails ?? null,
+    ...(typeof data?.retryable === "boolean" ? { retryable: data.retryable } : {})
   };
 }
 
@@ -207,6 +210,7 @@ export function parseWebhookConfigureResponse(data: any): WebhookConfigureRespon
 
 export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
   const transcription = parseGenerationTranscription(data?.transcription);
+  const warnings = parseGenerationWarnings(data?.warnings);
   return {
     eventType: data.eventType,
     eventId: data.eventId,
@@ -218,6 +222,7 @@ export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
     hasVideo: data.hasVideo ?? null,
     modelKey: data.modelKey ?? null,
     ...(transcription ? { transcription } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
     error: data.error ?? null,
     errorDetails: data.errorDetails ?? null
   };
@@ -272,6 +277,29 @@ function parseGenerationTranscription(data: unknown): GenerationTranscription | 
     return { status };
   }
   return undefined;
+}
+
+/** Keeps the warnings with a known code and well-formed fields; anything else in the array is dropped. */
+function parseGenerationWarnings(data: unknown): GenerationWarning[] {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  const warnings: GenerationWarning[] = [];
+  for (const item of data as unknown[]) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const { code, languages, message } = item as Record<string, unknown>;
+    if (code !== "unsupported_language" || !Array.isArray(languages) || typeof message !== "string") {
+      continue;
+    }
+    warnings.push({
+      code,
+      languages: languages.filter((language): language is string => typeof language === "string" && language !== ""),
+      message
+    });
+  }
+  return warnings;
 }
 
 export function createAudioIsolationResult(

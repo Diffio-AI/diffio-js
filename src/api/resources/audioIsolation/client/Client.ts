@@ -1,12 +1,12 @@
 import type { DiffioClient } from "../../../../Client";
-import type { AudioIsolationResult, GenerationProgressResponse, ModelKey, RestoreMetadata } from "../../../types";
+import type { AcceptedModelKey, AudioIsolationResult, GenerationProgressResponse, RestoreMetadata } from "../../../types";
 
 export interface AudioIsolationRestoreOptions {
   filePath: string;
   contentType?: string;
   contentLength?: number;
   fileFormat?: string;
-  model?: ModelKey;
+  model?: AcceptedModelKey;
   sampling?: Record<string, unknown>;
   projectParams?: Record<string, unknown>;
   generationParams?: Record<string, unknown>;
@@ -28,7 +28,7 @@ export interface AudioIsolationIsolateOptions {
   contentType?: string;
   contentLength?: number;
   fileFormat?: string;
-  model?: ModelKey;
+  model?: AcceptedModelKey;
   sampling?: Record<string, unknown>;
   projectParams?: Record<string, unknown>;
   generationParams?: Record<string, unknown>;

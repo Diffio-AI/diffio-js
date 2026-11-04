@@ -1,5 +1,14 @@
-/** Models new generations can use (api/model_registry.json in diffio-ui); each has its own endpoint. */
-export type ModelKey = "diffio-4.6-flash" | "diffio-4.6-pro";
+/** Current models for new generations (api/model_registry.json in diffio-ui); each has its own endpoint. */
+export type ModelKey = "diffio-4.7-flash" | "diffio-4.7-pro";
+/**
+ * Older model names the SDK still accepts. Each runs the matching Diffio 4.7 model on its endpoint:
+ * the `-flash` names run `diffio-4.7-flash` and the `-pro` names run `diffio-4.7-pro`.
+ *
+ * @deprecated Use `diffio-4.7-flash` or `diffio-4.7-pro`.
+ */
+export type DeprecatedModelKey = "diffio-4.6-flash" | "diffio-4.6-pro" | "diffio-4.5-flash" | "diffio-4.5-pro";
+/** Every value the `model` option accepts: a current {@link ModelKey} or a deprecated alias of one. */
+export type AcceptedModelKey = ModelKey | DeprecatedModelKey;
 export type DownloadType = "audio" | "video" | "transcript";
 export type WebhookMode = "test" | "live";
 export type WebhookEventType =
@@ -12,6 +21,19 @@ export type TranscriptionStatus = "pending" | "available" | "unavailable";
 
 export interface GenerationTranscription {
   status: TranscriptionStatus;
+}
+
+/** Warning codes the SDK knows; warnings with other codes are left out of parsed responses. */
+export type GenerationWarningCode = "unsupported_language";
+
+/** Something about a generation's recording to know about; the generation still runs. */
+export interface GenerationWarning {
+  /** `unsupported_language`: the transcript has speech in a language Diffio does not support yet. */
+  code: GenerationWarningCode;
+  /** ISO 639-1 base codes such as `ja`, the language with the most words first. */
+  languages: string[];
+  /** A readable explanation, for example that the result probably won't be usable. */
+  message: string;
 }
 
 /** The edge upload session create_project opened; the upload token stays inside the SDK. */
@@ -140,8 +162,12 @@ export interface GenerationProgressResponse {
   queue?: GenerationQueueStatus;
   /** Independent of media completion; omitted by older API versions. */
   transcription?: GenerationTranscription;
+  /** Empty until the transcript is ready, and when older API versions omit it. */
+  warnings: GenerationWarning[];
   error?: string | null;
   errorDetails?: string | null;
+  /** Present with `error`; true when a new generation for the same project can retry the failure. */
+  retryable?: boolean;
 }
 
 export interface GenerationDownloadResponse {
@@ -214,6 +240,8 @@ export interface GenerationWebhookEvent {
   modelKey?: string | null;
   /** A completed generation may still have a pending or unavailable transcript. */
   transcription?: GenerationTranscription;
+  /** Present only when the generation has warnings. */
+  warnings?: GenerationWarning[];
   error?: string | null;
   errorDetails?: string | null;
 }
