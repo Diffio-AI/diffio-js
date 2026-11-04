@@ -8,7 +8,8 @@ const completedProgress: GenerationProgressResponse = {
   status: "complete",
   hasVideo: false,
   preProcessing: { status: "complete", progress: 100 },
-  inference: { status: "complete", progress: 100 }
+  inference: { status: "complete", progress: 100 },
+  warnings: []
 };
 
 const isolation: AudioIsolationResult = {
@@ -29,7 +30,7 @@ const isolation: AudioIsolationResult = {
   generation: {
     generationId: completedProgress.generationId,
     apiProjectId: completedProgress.apiProjectId,
-    modelKey: "diffio-4.6-flash",
+    modelKey: "diffio-4.7-flash",
     status: "queued"
   }
 };

@@ -1,14 +1,14 @@
 import type { DiffioClient } from "../../../../Client";
 import type {
+  AcceptedModelKey,
   CreateGenerationResponse,
   GenerationDownloadResponse,
-  GenerationProgressResponse,
-  ModelKey
+  GenerationProgressResponse
 } from "../../../types";
 
 export interface GenerationCreateOptions {
   apiProjectId: string;
-  model?: ModelKey;
+  model?: AcceptedModelKey;
   sampling?: Record<string, unknown>;
   params?: Record<string, unknown>;
   idempotencyKey?: string;

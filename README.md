@@ -1,6 +1,6 @@
 # Diffio JS SDK
 
-The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, edge upload, Diffio 4.6 generations, progress checks, and download URLs.
+The Diffio JS SDK helps you call the Diffio API from Node. This version covers project creation, edge upload, Diffio 4.7 generations, progress checks, and download URLs.
 
 ## Install
 
@@ -46,10 +46,11 @@ const projects = await client.listProjects({
 
 | Model | `model` value | Endpoint | Notes |
 |---|---|---|---|
-| Diffio 4.6 Flash | `diffio-4.6-flash` | `/v1/diffio-4.6-flash-generation` | Default. Fast, high quality speech restoration. |
-| Diffio 4.6 Pro | `diffio-4.6-pro` | `/v1/diffio-4.6-pro-generation` | Best quality. Paid accounts only. |
+| Diffio 4.7 Flash | `diffio-4.7-flash` | `/v1/diffio-4.7-flash-generation` | Default. Fast, high quality speech restoration. |
+| Diffio 4.7 Pro | `diffio-4.7-pro` | `/v1/diffio-4.7-pro-generation` | Best quality. Paid accounts only. |
 
-Omitting `model` uses `diffio-4.6-flash`. Earlier models (`diffio-2`, `diffio-2-flash`, `diffio-3.2`,
+Omitting `model` uses `diffio-4.7-flash`. Older model names still work and run Diffio 4.7 (Flash or
+Pro to match); they are deprecated. Earlier models (`diffio-2`, `diffio-2-flash`, `diffio-3.2`,
 `diffio-3.4`, `diffio-3.5`, `diffio-4.0-flash`, `diffio-4.0-pro`) are retired: the SDK refuses them
 before sending a request, and the API answers their endpoints with HTTP 410 `model_retired`.
 Generations created before a model was retired keep their original `modelKey`, so response
@@ -83,7 +84,7 @@ const project = await client.createProject({
 
 const generation = await client.createGeneration({
   apiProjectId: project.apiProjectId,
-  model: "diffio-4.6-flash",
+  model: "diffio-4.7-flash",
   idempotencyKey: "restore-sample-001"
 });
 
@@ -110,7 +111,7 @@ retrying after an uncertain response.
 `waitForGeneration` and `generations.waitForComplete` wait for the overall `status` to become
 `complete`. Individual stages reaching 100% or `complete` do not end polling while video publication
 or usage settlement is still pending. They poll for up to 600 seconds unless you pass `timeout`
-or `timeoutInSeconds`. `complete` means restored media is ready. Diffio 4.6 transcribes the recording before
+or `timeoutInSeconds`. `complete` means restored media is ready. Diffio 4.7 transcribes the recording before
 restoration starts, so a completed generation has its transcript unless transcription finished as
 `unavailable`; while a generation runs, transcription can be `pending`, `available`, or `unavailable`. Read
 `progress.transcription?.status` independently. Older responses omit `transcription`; absence does
@@ -124,7 +125,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const result = await client.audioIsolation.isolate({
   filePath: "sample.wav",
-  model: "diffio-4.6-flash",
+  model: "diffio-4.7-flash",
   idempotencyKey: "restore-sample-001"
 });
 
@@ -145,7 +146,7 @@ import { DiffioClient } from "diffio";
 const client = new DiffioClient({ apiKey: "diffio_live_..." });
 const [audioBytes, info] = await client.restoreAudio({
   filePath: "sample.wav",
-  model: "diffio-4.6-flash",
+  model: "diffio-4.7-flash",
   idempotencyKey: "restore-sample-001",
   onProgress: (progress) => console.log(progress.status)
 });
@@ -174,12 +175,31 @@ console.log(progress.status, progress.stage);
 console.log(progress.queue?.message ?? "not queued");
 console.log(progress.stageProgress?.overallPercent);
 console.log(progress.transcription?.status ?? "not reported");
+
+for (const warning of progress.warnings) {
+  console.log(warning.code, warning.languages, warning.message);
+}
+
+if (progress.status === "failed" && progress.retryable) {
+  // A new generation for the same project can retry this failure.
+}
 ```
 
 `stage` names the one step the generation is in (`pending`, `preparing`, `transcribing`, `queued`,
 `starting`, `downloading`, `decoding`, `restoring`, `finalizing`, `uploading`, `complete`, or
 `failed`). While it waits for a processing worker, `queue` reports its position and why it waits;
 while a worker runs it, `stageProgress` reports percentages and byte counts when known.
+
+`warnings` lists things to know about the recording; the generation still runs. It is an empty array
+until the transcript is ready (and when an older API version omits it). Each warning has a `code`,
+`languages`, and a readable `message`. Code `unsupported_language` means the transcript has speech in
+`languages` (ISO 639-1 codes such as `ja`, most words first) that Diffio does not support yet, so the
+result probably won't be usable.
+
+When `error` is present, `retryable` says whether a new generation for the same project can fix the
+failure (`true` when transcription did not succeed after its automatic retries; `false`, for example,
+when the upload has no speech). To retry, create a new generation for the project with a new
+`idempotencyKey`, or none; reusing the failed generation's key returns that failed generation.
 
 ## Generation download
 
@@ -304,7 +324,8 @@ Use the raw request body (not parsed JSON) plus the `svix-*` headers and your we
 Verified events expose the same optional `event.transcription` object as generation progress.
 A `generation.completed` event reports `available` transcription, or `unavailable` when no
 transcript could be produced; completion does not wait for a later transcript. Older events can omit
-`transcription`.
+`transcription`. Events include `event.warnings`, in the same shape as progress `warnings`, only when
+the generation has warnings.
 
 ```ts
 import express from "express";
@@ -335,10 +356,12 @@ app.post("/webhooks/diffio", express.raw({ type: "application/json" }), (req, re
 });
 ```
 
-## Upgrading to 0.3.0
+## Upgrading to 0.4.0
 
-0.3.0 adds Diffio 4.6 Flash (`diffio-4.6-flash`) and Diffio 4.6 Pro (`diffio-4.6-pro`), and the
-default model is now `diffio-4.6-flash`. Request and response shapes are unchanged.
+0.4.0 adds Diffio 4.7 Flash (`diffio-4.7-flash`) and Diffio 4.7 Pro (`diffio-4.7-pro`), and the
+default model is now `diffio-4.7-flash`. Generation progress adds `warnings` (always an array) and
+`retryable`, and generation webhook events add optional `warnings`. If you build
+`GenerationProgressResponse` objects yourself, for example as test fixtures, add `warnings: []`.
 
 ## Runtime compatibility
 

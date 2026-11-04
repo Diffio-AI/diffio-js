@@ -39,6 +39,8 @@ import type {
   GenerationProgressResponse,
   ListProjectGenerationsResponse,
   ListProjectsResponse,
+  AcceptedModelKey,
+  DeprecatedModelKey,
   ModelKey,
   RestoreMetadata,
   UsageSummaryResponse,
@@ -60,22 +62,24 @@ const DEFAULT_BASE_URL = "https://api.diffio.ai";
 const API_PREFIX = "v1";
 /** Generation endpoint for each supported model, as api/model_registry.json in diffio-ui lists them. */
 const MODEL_ENDPOINTS = {
-  "diffio-4.6-flash": "diffio-4.6-flash-generation",
-  "diffio-4.6-pro": "diffio-4.6-pro-generation"
+  "diffio-4.7-flash": "diffio-4.7-flash-generation",
+  "diffio-4.7-pro": "diffio-4.7-pro-generation"
 } as const satisfies Record<ModelKey, string>;
-/** Keys accepted from code written against 0.2.x; they run the matching 4.6 model. Not part of ModelKey. */
-const LEGACY_MODEL_KEYS: Readonly<Record<string, ModelKey>> = {
-  "diffio-4.5-flash": "diffio-4.6-flash",
-  "diffio-4.5-pro": "diffio-4.6-pro"
-};
+/** Deprecated aliases (the registry's `aliases`); each runs the matching 4.7 model, without a warning. */
+const DEPRECATED_MODEL_KEYS = {
+  "diffio-4.6-flash": "diffio-4.7-flash",
+  "diffio-4.6-pro": "diffio-4.7-pro",
+  "diffio-4.5-flash": "diffio-4.7-flash",
+  "diffio-4.5-pro": "diffio-4.7-pro"
+} as const satisfies Record<DeprecatedModelKey, ModelKey>;
 /** The registry's `freeDefault` model; Pro is paid-only, so it cannot be the default for every key. */
-const DEFAULT_MODEL_KEY: ModelKey = "diffio-4.6-flash";
+const DEFAULT_MODEL_KEY: ModelKey = "diffio-4.7-flash";
 const SUPPORTED_MODEL_KEYS = Object.keys(MODEL_ENDPOINTS) as ModelKey[];
 const hasOwn = (record: object, key: string): boolean => Object.prototype.hasOwnProperty.call(record, key);
 
 /** Returns the generation endpoint for a model key, or undefined when the SDK does not support it. */
 function generationEndpointForModel(model: string): string | undefined {
-  const modelKey = hasOwn(LEGACY_MODEL_KEYS, model) ? LEGACY_MODEL_KEYS[model] : model;
+  const modelKey = hasOwn(DEPRECATED_MODEL_KEYS, model) ? DEPRECATED_MODEL_KEYS[model as DeprecatedModelKey] : model;
   return hasOwn(MODEL_ENDPOINTS, modelKey) ? MODEL_ENDPOINTS[modelKey as ModelKey] : undefined;
 }
 /** Per-request timeout for one edge upload call; a 32 MiB part needs about 1 Mbit/s to finish in time. */
@@ -258,7 +262,7 @@ export class DiffioClient {
   /** Retries generation admission only when the caller supplies a nonblank idempotency key. */
   async createGeneration(options: {
     apiProjectId: string;
-    model?: ModelKey;
+    model?: AcceptedModelKey;
     sampling?: Record<string, unknown>;
     params?: Record<string, unknown>;
     idempotencyKey?: string;
@@ -536,7 +540,7 @@ export class DiffioClient {
     contentType?: string;
     contentLength?: number;
     fileFormat?: string;
-    model?: ModelKey;
+    model?: AcceptedModelKey;
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
@@ -681,7 +685,7 @@ export class DiffioClient {
     contentType?: string;
     contentLength?: number;
     fileFormat?: string;
-    model?: ModelKey;
+    model?: AcceptedModelKey;
     sampling?: Record<string, unknown>;
     projectParams?: Record<string, unknown>;
     generationParams?: Record<string, unknown>;
