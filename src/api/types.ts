@@ -244,6 +244,8 @@ export interface GenerationWebhookEvent {
   warnings?: GenerationWarning[];
   error?: string | null;
   errorDetails?: string | null;
+  /** On `generation.failed`: true when a new generation for the same project can fix the failure. */
+  retryable?: boolean;
 }
 
 export interface RestoreMetadata {

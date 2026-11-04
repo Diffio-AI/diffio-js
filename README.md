@@ -325,7 +325,8 @@ Verified events expose the same optional `event.transcription` object as generat
 A `generation.completed` event reports `available` transcription, or `unavailable` when no
 transcript could be produced; completion does not wait for a later transcript. Older events can omit
 `transcription`. Events include `event.warnings`, in the same shape as progress `warnings`, only when
-the generation has warnings.
+the generation has warnings. A `generation.failed` event includes `event.retryable`, as progress
+does, when the API sends it.
 
 ```ts
 import express from "express";
@@ -360,7 +361,7 @@ app.post("/webhooks/diffio", express.raw({ type: "application/json" }), (req, re
 
 0.4.0 adds Diffio 4.7 Flash (`diffio-4.7-flash`) and Diffio 4.7 Pro (`diffio-4.7-pro`), and the
 default model is now `diffio-4.7-flash`. Generation progress adds `warnings` (always an array) and
-`retryable`, and generation webhook events add optional `warnings`. If you build
+`retryable`, and generation webhook events add optional `warnings` and `retryable`. If you build
 `GenerationProgressResponse` objects yourself, for example as test fixtures, add `warnings: []`.
 
 ## Runtime compatibility

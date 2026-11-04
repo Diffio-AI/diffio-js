@@ -56,4 +56,12 @@ describe("generation webhook warnings", () => {
       expect(event.transcription).toEqual({ status: "available" });
     }
   );
+
+  test("generation.failed events pass retryable through; other events omit it", () => {
+    const failed = verify({ eventType: "generation.failed", status: "error", error: "Transcription failed.", retryable: true });
+    expect(failed.retryable).toBe(true);
+    expect(verify({ retryable: false }).retryable).toBe(false);
+    expect(verify({})).not.toHaveProperty("retryable");
+    expect(verify({ retryable: "yes" })).not.toHaveProperty("retryable");
+  });
 });

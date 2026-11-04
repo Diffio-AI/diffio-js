@@ -224,7 +224,8 @@ export function parseGenerationWebhookEvent(data: any): GenerationWebhookEvent {
     ...(transcription ? { transcription } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     error: data.error ?? null,
-    errorDetails: data.errorDetails ?? null
+    errorDetails: data.errorDetails ?? null,
+    ...(typeof data?.retryable === "boolean" ? { retryable: data.retryable } : {})
   };
 }
 
