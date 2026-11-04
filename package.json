@@ -1,6 +1,6 @@
 {
   "name": "diffio",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Diffio API client for Node.js",
   "repository": {
     "type": "git",
