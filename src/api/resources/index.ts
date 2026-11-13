@@ -1,7 +1,10 @@
-export { AccountClient } from "./account/client/Client";
-export { ApiKeysClient } from "./apiKeys/client/Client";
-export { AudioIsolationClient } from "./audioIsolation/client/Client";
-export { GenerationsClient } from "./generations/client/Client";
-export { ProjectsClient } from "./projects/client/Client";
-export { UsageClient } from "./usage/client/Client";
-export { WebhooksClient } from "./webhooks/client/Client";
+export { ModelsResource } from "./models";
+export { ProjectsResource, type ProjectUploadOptions } from "./projects";
+export {
+  GenerationsResource,
+  DEFAULT_GENERATION_WAIT_TIMEOUT_SECONDS,
+  type GenerationDownload,
+  type GenerationDownloadOptions
+} from "./generations";
+export { EditsResource, MixResource, ExportsResource, TranscriptsResource, AssistantResource } from "./editing";
+export { SharesResource, UsageResource, WebhooksResource } from "./account";

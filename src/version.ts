@@ -1,1 +1,1 @@
-export const DIFFIO_SDK_VERSION = "0.4.0";
+export const DIFFIO_SDK_VERSION = "1.0.0";

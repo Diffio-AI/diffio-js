@@ -1,75 +1,59 @@
-// Client for the edge Worker upload API ("Uploads" in diffio-ui specs/MacFleetArchitecture.md).
-// create_project opens the session and owns every auth decision; the edge only checks the
-// session's upload token and streams fixed-size parts into R2. The flow mirrors the web app's
-// uploader (diffio-ui app/services/edgeUploads.ts): start, PUT parts numbered from 1 with up to
-// four attempts each, complete with the sorted receipts, and abort on a fatal failure.
+// Sends a project's media bytes to Diffio's media host by following the `upload.requests` descriptors that
+// `POST /v2/projects` (and `POST /v2/projects/{id}/upload`) return: `start` once, `part` once per part
+// (numbered from 1, every part but the last exactly `part_size_bytes`), then `complete` listing every part.
+// Parts go up to three at a time with up to four attempts each; a fatal failure sends `abort`.
 
-import { DiffioUploadError, type EdgeUploadErrorCode } from "../errors";
+import { DiffioUploadError } from "../errors";
+import type { ProjectUpload, UploadRequest } from "../api/types";
+import { fetchWithTimeout } from "./transport";
+import { sleep } from "./retry";
 
-/** The upload session create_project returns; `uploadToken` authorizes edge calls for this one object. */
-export interface EdgeUploadSession {
-  uploadSessionId: string;
-  edgeBaseUrl: string;
-  uploadToken: string;
-  objectKey: string;
-  partSizeBytes: number;
-  maxBytes: number;
-  expiresAt: string;
+/** Bytes to upload: a size and a reader for [start, end). */
+export interface UploadSource {
+  sizeBytes: number;
+  read(start: number, end: number): Promise<Uint8Array>;
+  close?(): Promise<void>;
 }
 
-/** One planned multipart part: bytes [startByte, endByte) of the file. */
 export interface EdgeUploadPartPlan {
   partNumber: number;
   startByte: number;
   endByte: number;
 }
 
-/** A finished part as the edge acknowledges it, replayed on completion. */
 export interface EdgeUploadPartReceipt {
   partNumber: number;
   etag: string;
 }
 
-/** The edge's answer to `POST /v1/uploads/complete`. */
+/** The media host's answer to `complete`. */
 export interface EdgeUploadCompletion {
-  objectKey: string;
   sizeBytes: number;
   etag: string;
 }
 
-/** One HTTP request to the edge; the body is a fixed-length buffer because parts need a Content-Length. */
-export interface EdgeUploadHttpRequest {
-  method: "POST" | "PUT";
-  url: string;
-  bearerToken: string;
-  body: Uint8Array | string;
-  contentType: string;
-}
-
-/** The edge's answer to one request. Transport failures are thrown instead. */
-export interface EdgeUploadHttpResponse {
-  status: number;
-  bodyText: string;
-}
-
-/** Inputs for one upload of a project's original media through the edge. */
 export interface EdgeUploadOptions {
-  session: EdgeUploadSession;
-  sizeBytes: number;
-  /** Reads bytes [startByte, endByte) of the media; called once per part. */
-  readPartBytes: (startByte: number, endByte: number) => Promise<Uint8Array>;
-  sendEdgeRequest: (request: EdgeUploadHttpRequest) => Promise<EdgeUploadHttpResponse>;
+  upload: ProjectUpload;
+  source: UploadSource;
+  fetch: typeof fetch;
+  /** Parts in flight at once (default 3). */
   partConcurrency?: number;
+  /** Attempts per request, first included (default 4). */
   maxAttempts?: number;
+  /** Seconds before one media host request gives up (default 300; a 32 MiB part needs about 1 Mbit/s). */
+  timeout?: number;
+  signal?: AbortSignal;
+  /** Called after each part lands. */
+  onProgress?: (progress: { bytes_sent: number; bytes_total: number; parts_done: number; parts_total: number }) => void;
   sleep?: (delayMs: number) => Promise<void>;
 }
 
-const DEFAULT_EDGE_UPLOAD_PART_CONCURRENCY = 3;
-const DEFAULT_EDGE_UPLOAD_MAX_ATTEMPTS = 4;
+const DEFAULT_PART_CONCURRENCY = 3;
+const DEFAULT_MAX_ATTEMPTS = 4;
+const DEFAULT_TIMEOUT_SECONDS = 300;
+const PER_PART_PLACEHOLDERS = ["part_number", "etag", "part_length"];
 
-const defaultSleep = (delayMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, delayMs));
-
-const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** Splits a file into fixed-size parts numbered from 1; an empty file is one empty part. */
@@ -86,200 +70,242 @@ export function planEdgeUploadParts(sizeBytes: number, partSizeBytes: number): E
   return parts;
 }
 
-/** Backoff before retry `attempt` (2 = first retry): 1 s, 2 s, 4 s, capped at 8 s. */
+/** Backoff before attempt `attempt` (2 = first retry): 1 s, 2 s, 4 s, capped at 8 s. */
 export function resolveEdgeUploadRetryDelayMs(attempt: number): number {
   return Math.min(8000, 1000 * 2 ** Math.max(0, attempt - 2));
 }
 
-/** Validates the `upload` object of a create_project response; null when it is missing or incomplete. */
-export function parseEdgeUploadSession(value: unknown): EdgeUploadSession | null {
-  if (!isUnknownRecord(value)) return null;
-  const { uploadSessionId, uploadToken, edgeBaseUrl, objectKey, partSizeBytes, maxBytes, expiresAt } = value;
-  if (
-    typeof uploadSessionId !== "string" || !uploadSessionId ||
-    typeof uploadToken !== "string" || !uploadToken ||
-    typeof edgeBaseUrl !== "string" || !/^https?:\/\//i.test(edgeBaseUrl) ||
-    typeof objectKey !== "string" || !objectKey ||
-    typeof partSizeBytes !== "number" || !Number.isSafeInteger(partSizeBytes) || partSizeBytes <= 0 ||
-    typeof maxBytes !== "number" || !Number.isSafeInteger(maxBytes) || maxBytes <= 0
-  ) {
-    return null;
+type Vars = Record<string, string | number>;
+
+/** Replaces `{name}` placeholders in a string; a string that is only one placeholder keeps the value's type. */
+export function fillTemplateString(template: string, vars: Vars): string | number {
+  const whole = /^\{(\w+)\}$/.exec(template);
+  if (whole && whole[1] in vars) return vars[whole[1]];
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match));
+}
+
+const mentionsPerPartPlaceholder = (value: unknown): boolean => {
+  const text = JSON.stringify(value) ?? "";
+  return PER_PART_PLACEHOLDERS.some((name) => text.includes(`{${name}}`));
+};
+
+/**
+ * Fills a descriptor body template. An array whose items name per-part placeholders (`{part_number}`,
+ * `{etag}`) is expanded once per part, so `"parts": [{"partNumber": "{part_number}", "etag": "{etag}"}]`
+ * becomes the full sorted part list with numeric part numbers.
+ */
+export function fillTemplate(template: unknown, vars: Vars, parts: EdgeUploadPartReceipt[] = []): unknown {
+  if (typeof template === "string") return fillTemplateString(template, vars);
+  if (Array.isArray(template)) {
+    if (template.length > 0 && template.every(mentionsPerPartPlaceholder)) {
+      return parts.flatMap((part) =>
+        template.map((item) => fillTemplate(item, { ...vars, part_number: part.partNumber, etag: part.etag }, parts))
+      );
+    }
+    return template.map((item) => fillTemplate(item, vars, parts));
   }
+  if (isRecord(template)) {
+    return Object.fromEntries(Object.entries(template).map(([key, value]) => [key, fillTemplate(value, vars, parts)]));
+  }
+  return template;
+}
+
+/** The standard descriptors, for an `upload` object without `requests` (older answers). */
+export function defaultUploadRequests(upload: Pick<ProjectUpload, "edge_base_url" | "upload_token">): ProjectUpload["requests"] {
+  const edge = `${upload.edge_base_url.replace(/\/+$/, "")}/v1/uploads`;
+  const auth = { Authorization: `Bearer ${upload.upload_token}` };
+  const json = { ...auth, "Content-Type": "application/json" };
   return {
-    uploadSessionId,
-    uploadToken,
-    edgeBaseUrl: edgeBaseUrl.replace(/\/+$/, ""),
-    objectKey,
-    partSizeBytes,
-    maxBytes,
-    expiresAt: typeof expiresAt === "string" ? expiresAt : ""
+    start: { method: "POST", url: `${edge}/start`, headers: auth, body: null, returns: ["uploadId"], description: "" },
+    part: {
+      method: "PUT",
+      url: `${edge}/parts/{part_number}?uploadId={upload_id}`,
+      headers: { ...auth, "Content-Length": "{part_length}" },
+      body: null,
+      returns: ["partNumber", "etag"],
+      description: ""
+    },
+    complete: {
+      method: "POST",
+      url: `${edge}/complete`,
+      headers: json,
+      body: { uploadId: "{upload_id}", parts: [{ partNumber: "{part_number}", etag: "{etag}" }] },
+      returns: ["sizeBytes", "etag"],
+      description: ""
+    },
+    abort: { method: "POST", url: `${edge}/abort`, headers: json, body: { uploadId: "{upload_id}" }, returns: [], description: "" }
   };
 }
 
-const parseJsonBody = (bodyText: string): Record<string, unknown> => {
+const parseJson = (text: string): Record<string, unknown> => {
   try {
-    const parsed: unknown = JSON.parse(bodyText);
-    return isUnknownRecord(parsed) ? parsed : {};
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
 };
 
-/** Classifies a non-2xx edge response (`{"error": {"code", "message"}}`) as a typed upload error. */
-export function classifyEdgeUploadResponse(response: EdgeUploadHttpResponse): DiffioUploadError {
-  const body = parseJsonBody(response.bodyText);
-  const error = isUnknownRecord(body.error) ? body.error : {};
+/** Turns a non-2xx media host answer (`{"error": {"code", "message"}}`) into a typed upload error. */
+export function classifyEdgeUploadResponse(status: number, bodyText: string): DiffioUploadError {
+  const body = parseJson(bodyText);
+  const error = isRecord(body.error) ? body.error : {};
   const message = typeof error.message === "string" && error.message
     ? error.message
-    : `Upload failed with HTTP ${response.status}`;
-  const edgeErrorCode = typeof error.code === "string" ? error.code : undefined;
-  const responseBody: unknown = Object.keys(body).length > 0 ? body : response.bodyText || null;
-  const base = { statusCode: response.status, responseBody, edgeErrorCode };
-  let code: EdgeUploadErrorCode = "upload/rejected";
-  let retryable = false;
-  if (response.status === 413) code = "upload/too-large";
-  else if (response.status === 401 || response.status === 403) code = "upload/unauthorized";
-  else if (response.status === 408 || response.status === 429 || response.status >= 500) {
-    code = "upload/server";
-    retryable = true;
-  }
-  return new DiffioUploadError(code, message, { ...base, retryable });
+    : `The media host refused the upload with HTTP ${status}`;
+  const code = typeof error.code === "string" && error.code
+    ? error.code
+    : status === 413 ? "payload_too_large" : status === 401 || status === 403 ? "invalid_token" : "upload_failed";
+  const retryable = status === 408 || status === 429 || status >= 500;
+  return new DiffioUploadError({ code, message, status, retryable, body: Object.keys(body).length ? body : bodyText });
 }
 
-const isAbortError = (error: unknown): boolean =>
-  isUnknownRecord(error) && (error as { name?: unknown }).name === "AbortError";
-
-/** Turns a thrown transport failure into an upload error; caller aborts are final, other failures retryable. */
-function toEdgeUploadError(error: unknown): DiffioUploadError {
+function toUploadError(error: unknown, signal?: AbortSignal): DiffioUploadError {
   if (error instanceof DiffioUploadError) return error;
-  if (isAbortError(error) || (error instanceof Error && error.name === "AbortError")) {
-    return new DiffioUploadError("upload/canceled", "Upload was canceled.");
+  const name = isRecord(error) || error instanceof Error ? (error as { name?: unknown }).name : undefined;
+  if (signal?.aborted || name === "AbortError") {
+    return new DiffioUploadError({ code: "canceled", message: "The upload was canceled." });
   }
   const message = error instanceof Error ? error.message : String(error);
-  return new DiffioUploadError("upload/network", message || "Network error during upload", { retryable: true });
+  return new DiffioUploadError({ code: "network", message: message || "Network error during upload", retryable: true });
 }
 
-/** Uploads media through the edge in parts and completes the multipart object; the caller then confirms it. */
-export async function uploadProjectMediaToEdge(options: EdgeUploadOptions): Promise<EdgeUploadCompletion> {
-  const { session, sizeBytes, readPartBytes, sendEdgeRequest } = options;
-  const sleep = options.sleep ?? defaultSleep;
-  const concurrency = Math.max(1, options.partConcurrency ?? DEFAULT_EDGE_UPLOAD_PART_CONCURRENCY);
-  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_EDGE_UPLOAD_MAX_ATTEMPTS);
-  if (sizeBytes > session.maxBytes) {
-    throw new DiffioUploadError(
-      "upload/too-large",
-      `This file is ${sizeBytes} bytes; the upload limit is ${session.maxBytes} bytes.`
-    );
+/** Uploads the bytes through the descriptors and returns the media host's completion receipt. */
+export async function uploadToMediaHost(options: EdgeUploadOptions): Promise<EdgeUploadCompletion> {
+  const { upload, source, signal } = options;
+  const wait = options.sleep ?? ((ms: number) => sleep(ms, signal));
+  const concurrency = Math.max(1, options.partConcurrency ?? DEFAULT_PART_CONCURRENCY);
+  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const timeoutMs = (options.timeout ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const requests = upload.requests?.start && upload.requests?.part && upload.requests?.complete
+    ? upload.requests
+    : defaultUploadRequests(upload);
+  if (upload.max_bytes && source.sizeBytes > upload.max_bytes) {
+    throw new DiffioUploadError({
+      code: "too_large",
+      message: `This file is ${source.sizeBytes} bytes; the upload limit is ${upload.max_bytes} bytes.`
+    });
   }
 
-  const sendOnce = async (request: Omit<EdgeUploadHttpRequest, "bearerToken">): Promise<Record<string, unknown>> => {
-    let response: EdgeUploadHttpResponse;
-    try {
-      response = await sendEdgeRequest({ ...request, bearerToken: session.uploadToken });
-    } catch (error) {
-      throw toEdgeUploadError(error);
+  const send = async (
+    descriptor: UploadRequest,
+    vars: Vars,
+    body: Uint8Array | undefined,
+    parts?: EdgeUploadPartReceipt[]
+  ): Promise<Record<string, unknown>> => {
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(descriptor.headers ?? {})) {
+      // fetch sets Content-Length from the body; browsers refuse to let scripts set it.
+      if (name.toLowerCase() === "content-length") continue;
+      headers[name] = String(fillTemplateString(String(value), vars));
     }
-    if (response.status < 200 || response.status >= 300) throw classifyEdgeUploadResponse(response);
-    return parseJsonBody(response.bodyText);
+    let requestBody: BodyInit | undefined;
+    if (body) requestBody = body as unknown as BodyInit;
+    else if (descriptor.body != null) requestBody = JSON.stringify(fillTemplate(descriptor.body, vars, parts));
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        options.fetch,
+        String(fillTemplateString(descriptor.url, vars)),
+        { method: descriptor.method, headers, body: requestBody },
+        timeoutMs,
+        signal
+      );
+    } catch (error) {
+      throw toUploadError(error, signal);
+    }
+    const text = await response.text().catch(() => "");
+    if (!response.ok) throw classifyEdgeUploadResponse(response.status, text);
+    return parseJson(text);
   };
 
-  // Set by the first part that fails for good; the other lanes then stop instead of retrying.
   let fatalError: DiffioUploadError | null = null;
-
-  // Start, parts, and complete are all safe to repeat: a repeated start only opens a fresh
-  // multipart upload, and the edge answers a repeated complete from the stored object.
-  const sendWithRetries = async <T>(
-    describe: () => Omit<EdgeUploadHttpRequest, "bearerToken"> | Promise<Omit<EdgeUploadHttpRequest, "bearerToken">>,
-    readResult: (body: Record<string, unknown>) => T
-  ): Promise<T> => {
+  const withRetries = async <T>(run: () => Promise<T>): Promise<T> => {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        return readResult(await sendOnce(await describe()));
+        return await run();
       } catch (error) {
-        const uploadError = toEdgeUploadError(error);
+        const uploadError = toUploadError(error, signal);
         if (fatalError || !uploadError.retryable || attempt >= maxAttempts) throw fatalError ?? uploadError;
-        await sleep(resolveEdgeUploadRetryDelayMs(attempt + 1));
+        await wait(resolveEdgeUploadRetryDelayMs(attempt + 1));
       }
     }
   };
 
-  const jsonRequest = (path: string, body: unknown): Omit<EdgeUploadHttpRequest, "bearerToken"> => ({
-    method: "POST",
-    url: `${session.edgeBaseUrl}${path}`,
-    body: JSON.stringify(body),
-    contentType: "application/json"
-  });
-
-  const started = await sendWithRetries(() => jsonRequest("/v1/uploads/start", {}), (body) => {
+  // Every step is safe to repeat: a repeated start opens a fresh multipart upload, parts overwrite, and the
+  // media host answers a repeated complete from the stored object.
+  const started = await withRetries(async () => {
+    const body = await send(requests.start, {}, undefined);
     if (typeof body.uploadId !== "string" || !body.uploadId) {
-      throw new DiffioUploadError("upload/invalid-response", "The edge did not return an uploadId.");
+      throw new DiffioUploadError({ code: "invalid_response", message: "The media host did not return an uploadId." });
     }
-    const partSizeBytes = typeof body.partSizeBytes === "number" && Number.isSafeInteger(body.partSizeBytes) &&
-      body.partSizeBytes > 0
-      ? body.partSizeBytes
-      : session.partSizeBytes;
-    return { uploadId: body.uploadId, partSizeBytes };
+    return body;
   });
-  const { uploadId } = started;
+  const uploadId = started.uploadId as string;
+  const partSize = typeof started.partSizeBytes === "number" && Number.isSafeInteger(started.partSizeBytes) &&
+    started.partSizeBytes > 0
+    ? started.partSizeBytes
+    : upload.part_size_bytes;
 
-  const parts = planEdgeUploadParts(sizeBytes, started.partSizeBytes);
-  const pending = [...parts];
+  const plan = planEdgeUploadParts(source.sizeBytes, partSize);
+  const pending = [...plan];
   const receipts: EdgeUploadPartReceipt[] = [];
+  let bytesSent = 0;
 
   const uploadPart = async (part: EdgeUploadPartPlan): Promise<void> => {
     let bytes: Uint8Array | null = null;
-    const receipt = await sendWithRetries(async () => {
+    const etag = await withRetries(async () => {
       if (fatalError) throw fatalError;
-      bytes = bytes ?? await readPartBytes(part.startByte, part.endByte);
-      return {
-        method: "PUT",
-        url: `${session.edgeBaseUrl}/v1/uploads/parts/${part.partNumber}?uploadId=${encodeURIComponent(uploadId)}`,
-        body: bytes,
-        contentType: "application/octet-stream"
-      };
-    }, (body) => {
+      bytes = bytes ?? await source.read(part.startByte, part.endByte);
+      const vars = { part_number: part.partNumber, upload_id: uploadId, part_length: bytes.byteLength };
+      const body = await send(requests.part, vars, bytes);
       if (typeof body.etag !== "string" || !body.etag) {
-        throw new DiffioUploadError("upload/invalid-response", `Part ${part.partNumber} returned no etag.`);
+        throw new DiffioUploadError({ code: "invalid_response", message: `Part ${part.partNumber} returned no etag.` });
       }
-      return { partNumber: part.partNumber, etag: body.etag };
+      return body.etag;
     });
-    receipts.push(receipt);
+    receipts.push({ partNumber: part.partNumber, etag });
+    bytesSent += part.endByte - part.startByte;
+    options.onProgress?.({
+      bytes_sent: bytesSent,
+      bytes_total: source.sizeBytes,
+      parts_done: receipts.length,
+      parts_total: plan.length
+    });
   };
 
-  const runLane = async (): Promise<void> => {
+  const lane = async (): Promise<void> => {
     while (pending.length > 0 && !fatalError) {
       const part = pending.shift();
       if (!part) return;
       try {
         await uploadPart(part);
       } catch (error) {
-        fatalError = fatalError ?? toEdgeUploadError(error);
+        fatalError = fatalError ?? toUploadError(error, signal);
         throw fatalError;
       }
     }
   };
 
-  const lanes = Array.from({ length: Math.min(concurrency, parts.length) }, () => runLane());
-  const laneResults = await Promise.allSettled(lanes);
-  const failedLane = laneResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (failedLane) {
-    const uploadError = fatalError ?? toEdgeUploadError(failedLane.reason);
-    // Release the partial upload; a failure here never masks the transfer error.
-    await sendOnce(jsonRequest("/v1/uploads/abort", { uploadId })).catch(() => undefined);
+  const results = await Promise.allSettled(Array.from({ length: Math.min(concurrency, plan.length) }, lane));
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed) {
+    const uploadError = fatalError ?? toUploadError(failed.reason, signal);
+    if (requests.abort) {
+      // Release the stored parts; a failure here never hides the transfer error.
+      await send(requests.abort, { upload_id: uploadId }, undefined).catch(() => undefined);
+    }
     throw uploadError;
   }
 
   receipts.sort((left, right) => left.partNumber - right.partNumber);
-  const completion = await sendWithRetries(() => jsonRequest("/v1/uploads/complete", { uploadId, parts: receipts }), (body) => ({
-    objectKey: typeof body.objectKey === "string" && body.objectKey ? body.objectKey : session.objectKey,
-    sizeBytes: typeof body.sizeBytes === "number" ? body.sizeBytes : sizeBytes,
-    etag: typeof body.etag === "string" ? body.etag : ""
-  }));
-  if (completion.sizeBytes !== sizeBytes) {
-    throw new DiffioUploadError(
-      "upload/invalid-response",
-      `The edge stored ${completion.sizeBytes} bytes but the file has ${sizeBytes} bytes.`
-    );
+  const completion = await withRetries(() => send(requests.complete, { upload_id: uploadId }, undefined, receipts));
+  const sizeBytes = typeof completion.sizeBytes === "number" ? completion.sizeBytes : source.sizeBytes;
+  if (sizeBytes !== source.sizeBytes) {
+    throw new DiffioUploadError({
+      code: "invalid_response",
+      message: `The media host stored ${sizeBytes} bytes but the file has ${source.sizeBytes} bytes.`
+    });
   }
-  return completion;
+  return { sizeBytes, etag: typeof completion.etag === "string" ? completion.etag : "" };
 }
