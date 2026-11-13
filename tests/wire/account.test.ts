@@ -85,6 +85,14 @@ describe("webhooks", () => {
     expect(api.requests[0].path).toBe("/webhooks/portal");
   });
 
+  test("portal never sends Diffio-End-User, even from a client that sets endUser", async () => {
+    const api = fakeApi();
+    api.on("post", "/webhooks/portal", { body: { object: "webhook_portal", url: "https://app.svix.test/login#key", event_types: [] } });
+    await api.client({ endUser: "customer-1" }).webhooks.portal();
+    await api.client({ endUser: "customer-1" }).webhooks.portal({ endUser: "customer-2" });
+    expect(api.requests.map((request) => request.headers.get("diffio-end-user"))).toEqual([null, null]);
+  });
+
   test("portal without webhooks:write is permission_denied", async () => {
     const api = fakeApi();
     api.on("post", "/webhooks/portal", { status: 403, body: errorBody("permission_denied", "Permission denied. Missing webhooks:write scope.") });

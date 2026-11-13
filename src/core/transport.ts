@@ -45,6 +45,8 @@ export interface ApiRequest {
   idempotent: boolean;
   /** Send no API key (public routes such as `GET /models` and `GET /shares/{id}`). */
   noAuth?: boolean;
+  /** Never send `Diffio-End-User` (account-level routes such as `POST /webhooks/portal` refuse it). */
+  accountLevel?: boolean;
   /** This operation honours `Idempotency-Key`: send the caller's key, or make one. */
   acceptsIdempotencyKey?: boolean;
   /** Default timeout in seconds when neither the call nor the client sets one. */
@@ -197,7 +199,7 @@ export class Transport {
       extra.Authorization = `Bearer ${apiKey}`;
     }
     const endUser = options?.endUser !== undefined ? options.endUser : this.options.endUser;
-    if (endUser && !request.noAuth) extra["Diffio-End-User"] = endUser;
+    if (endUser && !request.noAuth && !request.accountLevel) extra["Diffio-End-User"] = endUser;
     if (request.body !== undefined) extra["Content-Type"] = "application/json";
     return resolveHeaders(mergeHeaders(sdkHeaders, this.options.headers, extra, options?.headers));
   }

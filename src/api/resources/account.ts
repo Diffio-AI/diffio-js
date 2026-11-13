@@ -84,13 +84,15 @@ export class WebhooksResource {
 
   /**
    * `POST /v2/webhooks/portal`: a short-lived link to the webhook portal, where you add endpoints, pick
-   * events and copy each endpoint's signing secret. Needs a key with the `webhooks:write` scope.
+   * events and copy each endpoint's signing secret. Needs a key with write permission. The portal belongs
+   * to the account, so this call never sends `Diffio-End-User`, even when the client sets `endUser`.
    */
   async portal(options?: RequestOptions): Promise<WebhookPortal> {
     return this.transport.request<WebhookPortal>({
       method: "POST",
       path: "/webhooks/portal",
       idempotent: true,
+      accountLevel: true,
       options
     });
   }
