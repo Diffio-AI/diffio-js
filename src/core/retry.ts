@@ -1,39 +1,41 @@
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export interface RetryOptions {
-  maxRetries: number;
-  retryBackoff: number;
-  retryStatusCodes: number[];
-}
-
-export async function requestWithRetries(
-  requestFn: () => Promise<Response>,
-  { maxRetries, retryBackoff, retryStatusCodes }: RetryOptions
-): Promise<Response> {
-  let attempt = 0;
-
-  while (true) {
-    try {
-      const response = await requestFn();
-      if (
-        retryStatusCodes.length > 0 &&
-        retryStatusCodes.includes(response.status) &&
-        attempt < maxRetries
-      ) {
-        response.body?.cancel?.();
-        await sleep(retryBackoff * 1000 * 2 ** attempt);
-        attempt += 1;
-        continue;
-      }
-      return response;
-    } catch (error) {
-      if (attempt >= maxRetries) {
-        throw error;
-      }
-      await sleep(retryBackoff * 1000 * 2 ** attempt);
-      attempt += 1;
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal));
+      return;
     }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function abortReason(signal?: AbortSignal): unknown {
+  const reason = (signal as { reason?: unknown } | undefined)?.reason;
+  if (reason) return reason;
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+/** Statuses worth sending again: timeouts, rate limits and server-side failures. */
+export const DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504];
+
+/**
+ * Delay before retry number `attempt` (1 = first retry): `backoff * 2^(attempt-1)` seconds with up to 25 %
+ * jitter, capped at 8 s, or the server's `Retry-After` (seconds, capped at 60 s) when it sent one.
+ */
+export function retryDelayMs(attempt: number, backoffSeconds: number, retryAfter?: string | null): number {
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(60, seconds) * 1000;
   }
+  const base = Math.min(8, backoffSeconds * 2 ** Math.max(0, attempt - 1)) * 1000;
+  return Math.round(base * (1 + Math.random() * 0.25));
 }

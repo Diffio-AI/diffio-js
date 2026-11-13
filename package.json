@@ -1,7 +1,7 @@
 {
   "name": "diffio",
-  "version": "0.4.0",
-  "description": "Diffio API client for Node.js",
+  "version": "1.0.0",
+  "description": "Diffio API v2 client for Node.js and browsers",
   "repository": {
     "type": "git",
     "url": "https://github.com/Diffio-AI/diffio-js"
@@ -23,13 +23,8 @@
     "test:unit": "jest --selectProjects unit",
     "test:wire": "jest --selectProjects wire"
   },
-  "dependencies": {
-    "mime-types": "^2.1.35",
-    "svix": "^1.84.1"
-  },
   "devDependencies": {
     "@types/jest": "^29.5.14",
-    "@types/mime-types": "^2.1.4",
     "@types/node": "^18.19.70",
     "jest": "^29.7.0",
     "msw": "^2.11.2",

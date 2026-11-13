@@ -1,156 +1,216 @@
 import {
   classifyEdgeUploadResponse,
-  parseEdgeUploadSession,
+  defaultUploadRequests,
+  fillTemplate,
+  fillTemplateString,
   planEdgeUploadParts,
   resolveEdgeUploadRetryDelayMs,
-  uploadProjectMediaToEdge,
-  type EdgeUploadHttpRequest,
-  type EdgeUploadHttpResponse,
-  type EdgeUploadSession
+  uploadToMediaHost
 } from "../../../src/core/edgeUpload";
 import { DiffioUploadError } from "../../../src/errors";
+import type { ProjectUpload } from "../../../src/api/types";
 
-const session: EdgeUploadSession = {
-  uploadSessionId: "api-proj_1",
-  edgeBaseUrl: "https://edge.example.com",
-  uploadToken: "upload-token",
-  objectKey: "api/users/u/projects/proj_1/original/a.wav",
-  partSizeBytes: 4,
-  maxBytes: 64,
-  expiresAt: "2026-10-08T00:00:00Z"
-};
+const EDGE = "https://media.example.test";
+const TOKEN = "v1.payload.signature";
 
-const json = (status: number, body: unknown): EdgeUploadHttpResponse => ({ status, bodyText: JSON.stringify(body) });
-
-/** A scripted edge: `parts` answers per part number, consumed one per attempt, defaulting to success. */
-function scriptedEdge(options: { parts?: Record<number, Array<EdgeUploadHttpResponse | Error>>; completeSizeBytes?: number } = {}) {
-  const requests: EdgeUploadHttpRequest[] = [];
-  const scripts = new Map(Object.entries(options.parts ?? {}).map(([key, value]) => [Number(key), [...value]]));
-  const sendEdgeRequest = async (request: EdgeUploadHttpRequest): Promise<EdgeUploadHttpResponse> => {
-    requests.push(request);
-    const url = new URL(request.url);
-    if (url.pathname === "/v1/uploads/start") return json(200, { uploadId: "u-1", partSizeBytes: 4, maxBytes: 64 });
-    if (url.pathname.startsWith("/v1/uploads/parts/")) {
-      const partNumber = Number(url.pathname.split("/").pop());
-      const next = scripts.get(partNumber)?.shift();
-      if (next instanceof Error) throw next;
-      return next ?? json(200, { partNumber, etag: `etag-${partNumber}` });
-    }
-    if (url.pathname === "/v1/uploads/complete") {
-      return json(200, { objectKey: session.objectKey, sizeBytes: options.completeSizeBytes ?? 10, etag: "obj" });
-    }
-    return json(200, {});
+function upload(overrides: Partial<ProjectUpload> = {}): ProjectUpload {
+  return {
+    upload_session_id: "api-p1",
+    edge_base_url: EDGE,
+    upload_token: TOKEN,
+    part_size_bytes: 4,
+    max_bytes: 1000,
+    expires_at: "2026-11-14T00:00:00Z",
+    requests: defaultUploadRequests({ edge_base_url: EDGE, upload_token: TOKEN }),
+    ...overrides
   };
-  return { requests, sendEdgeRequest };
 }
 
-const media = Buffer.from("0123456789");
-const readPartBytes = async (startByte: number, endByte: number): Promise<Uint8Array> => media.subarray(startByte, endByte);
+interface Sent {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | Uint8Array | undefined;
+}
 
-describe("edge upload protocol", () => {
-  test("plans fixed-size parts numbered from 1, and one empty part for an empty file", () => {
+/** A fake media host as a fetch function, with injectable part failures. */
+function fakeMediaHost(options: { partFailures?: Record<number, Array<number | "network">>; partSize?: number } = {}) {
+  const sent: Sent[] = [];
+  const parts = new Map<number, Uint8Array>();
+  const failures = new Map(Object.entries(options.partFailures ?? {}).map(([k, v]) => [Number(k), [...v]]));
+  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const body = init?.body as string | Uint8Array | undefined;
+    sent.push({ method: String(init?.method), url, headers, body });
+    const json = (value: unknown, status = 200) =>
+      new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+    if (headers.Authorization !== `Bearer ${TOKEN}`) return json({ error: { code: "invalid_token", message: "no" } }, 401);
+    const path = new URL(url).pathname;
+    if (path === "/v1/uploads/start") return json({ uploadId: "up-1", partSizeBytes: options.partSize ?? 4, maxBytes: 1000 });
+    const partMatch = /^\/v1\/uploads\/parts\/(\d+)$/.exec(path);
+    if (partMatch) {
+      const number = Number(partMatch[1]);
+      const failure = failures.get(number)?.shift();
+      if (failure === "network") throw new TypeError("fetch failed");
+      if (failure) return json({ error: { code: "internal_error", message: "boom" } }, failure);
+      parts.set(number, body as Uint8Array);
+      return json({ partNumber: number, etag: `e${number}` });
+    }
+    if (path === "/v1/uploads/complete") {
+      const parsed = JSON.parse(String(body)) as { parts: Array<{ partNumber: number; etag: string }> };
+      const size = parsed.parts.reduce((total, part) => total + (parts.get(part.partNumber)?.byteLength ?? 0), 0);
+      return json({ objectKey: "k", sizeBytes: size, etag: "obj" });
+    }
+    if (path === "/v1/uploads/abort") return json({});
+    return json({ error: { code: "not_found", message: "?" } }, 404);
+  }) as typeof fetch;
+  return { fetchFn, sent, parts };
+}
+
+const bytesSource = (bytes: Uint8Array) => ({
+  sizeBytes: bytes.byteLength,
+  read: async (start: number, end: number) => bytes.subarray(start, end)
+});
+
+describe("planEdgeUploadParts", () => {
+  test("splits into fixed parts numbered from 1", () => {
     expect(planEdgeUploadParts(10, 4)).toEqual([
       { partNumber: 1, startByte: 0, endByte: 4 },
       { partNumber: 2, startByte: 4, endByte: 8 },
       { partNumber: 3, startByte: 8, endByte: 10 }
     ]);
+  });
+
+  test("an empty file is one empty part", () => {
     expect(planEdgeUploadParts(0, 4)).toEqual([{ partNumber: 1, startByte: 0, endByte: 0 }]);
   });
 
-  test("backs off 1 s, 2 s, 4 s and caps at 8 s", () => {
-    expect([2, 3, 4, 5, 6].map(resolveEdgeUploadRetryDelayMs)).toEqual([1000, 2000, 4000, 8000, 8000]);
+  test("refuses bad sizes", () => {
+    expect(() => planEdgeUploadParts(-1, 4)).toThrow();
+    expect(() => planEdgeUploadParts(1, 0)).toThrow();
   });
 
-  test("rejects an incomplete upload session", () => {
-    expect(parseEdgeUploadSession({ ...session, uploadToken: "" })).toBeNull();
-    expect(parseEdgeUploadSession({ ...session, edgeBaseUrl: "edge.example.com" })).toBeNull();
-    expect(parseEdgeUploadSession(undefined)).toBeNull();
-    expect(parseEdgeUploadSession({ ...session, edgeBaseUrl: "https://edge.example.com//" })?.edgeBaseUrl)
-      .toBe("https://edge.example.com");
+  test("retry delays double and cap at 8 s", () => {
+    expect([2, 3, 4, 5, 9].map(resolveEdgeUploadRetryDelayMs)).toEqual([1000, 2000, 4000, 8000, 8000]);
+  });
+});
+
+describe("descriptor templates", () => {
+  test("a whole-placeholder string keeps the value's type", () => {
+    expect(fillTemplateString("{part_number}", { part_number: 3 })).toBe(3);
+    expect(fillTemplateString("/parts/{part_number}?uploadId={upload_id}", { part_number: 3, upload_id: "u" }))
+      .toBe("/parts/3?uploadId=u");
+    expect(fillTemplateString("{unknown}", {})).toBe("{unknown}");
   });
 
-  test.each([
-    [413, "upload/too-large", false],
-    [401, "upload/unauthorized", false],
-    [403, "upload/unauthorized", false],
-    [400, "upload/rejected", false],
-    [429, "upload/server", true],
-    [503, "upload/server", true]
-  ] as const)("classifies HTTP %s as %s", (status, code, retryable) => {
-    const error = classifyEdgeUploadResponse(json(status, { error: { code: "token_expired", message: "Upload token refused" } }));
-    expect(error).toMatchObject({ uploadErrorCode: code, retryable, statusCode: status, edgeErrorCode: "token_expired" });
-    expect(error.message).toBe("Upload token refused");
+  test("the complete body expands one entry per part", () => {
+    const template = { uploadId: "{upload_id}", parts: [{ partNumber: "{part_number}", etag: "{etag}" }] };
+    expect(fillTemplate(template, { upload_id: "u" }, [{ partNumber: 1, etag: "a" }, { partNumber: 2, etag: "b" }]))
+      .toEqual({ uploadId: "u", parts: [{ partNumber: 1, etag: "a" }, { partNumber: 2, etag: "b" }] });
   });
 
-  test("sends start, every part with the bearer token, and completes with sorted receipts", async () => {
-    const edge = scriptedEdge();
-    const completion = await uploadProjectMediaToEdge({ session, sizeBytes: 10, readPartBytes, sendEdgeRequest: edge.sendEdgeRequest });
+  test("classifies media host refusals", () => {
+    const expired = classifyEdgeUploadResponse(401, JSON.stringify({ error: { code: "token_expired", message: "Expired" } }));
+    expect(expired).toBeInstanceOf(DiffioUploadError);
+    expect(expired).toMatchObject({ code: "token_expired", message: "Expired", status: 401, retryable: false });
+    expect(classifyEdgeUploadResponse(503, "")).toMatchObject({ code: "upload_failed", retryable: true });
+    expect(classifyEdgeUploadResponse(413, "")).toMatchObject({ code: "payload_too_large", retryable: false });
+  });
+});
 
-    expect(completion).toEqual({ objectKey: session.objectKey, sizeBytes: 10, etag: "obj" });
-    expect(edge.requests.every((request) => request.bearerToken === "upload-token")).toBe(true);
-    const complete = edge.requests.find((request) => request.url.endsWith("/v1/uploads/complete"));
-    expect(JSON.parse(String(complete?.body))).toEqual({
-      uploadId: "u-1",
-      parts: [
-        { partNumber: 1, etag: "etag-1" },
-        { partNumber: 2, etag: "etag-2" },
-        { partNumber: 3, etag: "etag-3" }
-      ]
+describe("uploadToMediaHost", () => {
+  test("follows the descriptors: start, every part, complete with numeric part numbers", async () => {
+    const host = fakeMediaHost();
+    const bytes = new TextEncoder().encode("0123456789");
+    const progress: number[] = [];
+    const result = await uploadToMediaHost({
+      upload: upload(),
+      source: bytesSource(bytes),
+      fetch: host.fetchFn,
+      partConcurrency: 1,
+      onProgress: (p) => progress.push(p.bytes_sent)
     });
+    expect(result).toEqual({ sizeBytes: 10, etag: "obj" });
+    expect(host.sent.map((s) => `${s.method} ${new URL(s.url).pathname}${new URL(s.url).search}`)).toEqual([
+      "POST /v1/uploads/start",
+      "PUT /v1/uploads/parts/1?uploadId=up-1",
+      "PUT /v1/uploads/parts/2?uploadId=up-1",
+      "PUT /v1/uploads/parts/3?uploadId=up-1",
+      "POST /v1/uploads/complete"
+    ]);
+    // Content-Length comes from the body; the descriptor's template value is never sent.
+    expect(Object.keys(host.sent[1].headers).map((h) => h.toLowerCase())).not.toContain("content-length");
+    expect(host.sent[0].body).toBeUndefined();
+    expect(JSON.parse(String(host.sent[4].body))).toEqual({
+      uploadId: "up-1",
+      parts: [{ partNumber: 1, etag: "e1" }, { partNumber: 2, etag: "e2" }, { partNumber: 3, etag: "e3" }]
+    });
+    expect(progress).toEqual([4, 8, 10]);
   });
 
-  test("retries network failures and retryable statuses with backoff, then succeeds", async () => {
-    const edge = scriptedEdge({ parts: { 2: [new TypeError("fetch failed"), json(502, {})] } });
+  test("uses the descriptor URLs, not edge_base_url, when they differ", async () => {
+    const host = fakeMediaHost();
+    const requests = defaultUploadRequests({ edge_base_url: EDGE, upload_token: TOKEN });
+    await uploadToMediaHost({
+      upload: upload({ edge_base_url: "https://ignored.example.test", requests }),
+      source: bytesSource(new Uint8Array(3)),
+      fetch: host.fetchFn
+    });
+    expect(host.sent.every((s) => s.url.startsWith(EDGE))).toBe(true);
+  });
+
+  test("builds the standard descriptors when the answer has none", async () => {
+    const host = fakeMediaHost();
+    const answer = upload();
+    delete (answer as Partial<ProjectUpload>).requests;
+    await uploadToMediaHost({ upload: answer, source: bytesSource(new Uint8Array(5)), fetch: host.fetchFn });
+    expect(host.sent.map((s) => new URL(s.url).pathname)).toEqual([
+      "/v1/uploads/start", "/v1/uploads/parts/1", "/v1/uploads/parts/2", "/v1/uploads/complete"
+    ]);
+  });
+
+  test("retries a part after a 503 and a network failure", async () => {
+    const host = fakeMediaHost({ partFailures: { 2: [503, "network"] } });
     const delays: number[] = [];
-    await uploadProjectMediaToEdge({
-      session,
-      sizeBytes: 10,
-      readPartBytes,
-      sendEdgeRequest: edge.sendEdgeRequest,
-      sleep: async (delayMs) => {
-        delays.push(delayMs);
-      }
+    await uploadToMediaHost({
+      upload: upload(),
+      source: bytesSource(new Uint8Array(10)),
+      fetch: host.fetchFn,
+      partConcurrency: 1,
+      sleep: async (ms) => { delays.push(ms); }
     });
-
-    expect(edge.requests.filter((request) => request.url.includes("/parts/2?"))).toHaveLength(3);
+    expect(host.sent.filter((s) => s.url.includes("/parts/2")).length).toBe(3);
     expect(delays).toEqual([1000, 2000]);
   });
 
-  test("gives up after four attempts and aborts the multipart upload", async () => {
-    const edge = scriptedEdge({ parts: { 1: [json(503, {}), json(503, {}), json(503, {}), json(503, {})] } });
-    const error = await uploadProjectMediaToEdge({
-      session,
-      sizeBytes: 10,
-      readPartBytes,
-      sendEdgeRequest: edge.sendEdgeRequest,
-      partConcurrency: 1,
+  test("a part that keeps failing aborts the upload and throws", async () => {
+    const host = fakeMediaHost({ partFailures: { 1: [500, 500, 500, 500] } });
+    await expect(uploadToMediaHost({
+      upload: upload(),
+      source: bytesSource(new Uint8Array(3)),
+      fetch: host.fetchFn,
       sleep: async () => undefined
-    }).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(DiffioUploadError);
-    expect(error).toMatchObject({ uploadErrorCode: "upload/server", statusCode: 503 });
-    expect(edge.requests.filter((request) => request.url.includes("/parts/1?"))).toHaveLength(4);
-    expect(edge.requests.at(-1)?.url).toBe("https://edge.example.com/v1/uploads/abort");
-    expect(edge.requests.some((request) => request.url.endsWith("/v1/uploads/complete"))).toBe(false);
+    })).rejects.toMatchObject({ name: "DiffioUploadError", status: 500, retryable: true });
+    expect(host.sent.at(-1)?.url).toBe(`${EDGE}/v1/uploads/abort`);
+    expect(JSON.parse(String(host.sent.at(-1)?.body))).toEqual({ uploadId: "up-1" });
   });
 
-  test("a caller abort is final and is not retried", async () => {
-    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
-    const edge = scriptedEdge({ parts: { 1: [abort] } });
-    await expect(uploadProjectMediaToEdge({
-      session,
-      sizeBytes: 10,
-      readPartBytes,
-      sendEdgeRequest: edge.sendEdgeRequest,
-      partConcurrency: 1,
+  test("a refused token is final", async () => {
+    const host = fakeMediaHost();
+    await expect(uploadToMediaHost({
+      upload: upload({ upload_token: "wrong", requests: defaultUploadRequests({ edge_base_url: EDGE, upload_token: "wrong" }) }),
+      source: bytesSource(new Uint8Array(3)),
+      fetch: host.fetchFn,
       sleep: async () => undefined
-    })).rejects.toMatchObject({ uploadErrorCode: "upload/canceled" });
-    expect(edge.requests.filter((request) => request.url.includes("/parts/1?"))).toHaveLength(1);
+    })).rejects.toMatchObject({ code: "invalid_token", status: 401 });
+    expect(host.sent.length).toBe(1);
   });
 
-  test("a stored size that differs from the file is reported", async () => {
-    const edge = scriptedEdge({ completeSizeBytes: 9 });
-    await expect(uploadProjectMediaToEdge({ session, sizeBytes: 10, readPartBytes, sendEdgeRequest: edge.sendEdgeRequest }))
-      .rejects.toMatchObject({ uploadErrorCode: "upload/invalid-response" });
+  test("refuses a file over max_bytes before sending anything", async () => {
+    const host = fakeMediaHost();
+    await expect(uploadToMediaHost({ upload: upload({ max_bytes: 2 }), source: bytesSource(new Uint8Array(3)), fetch: host.fetchFn }))
+      .rejects.toMatchObject({ code: "too_large" });
+    expect(host.sent.length).toBe(0);
   });
 });
